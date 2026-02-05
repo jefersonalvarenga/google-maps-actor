@@ -1,0 +1,56 @@
+{
+    "title": "Google Maps Scraper Input",
+    "type": "object",
+    "schemaVersion": 1,
+    "properties": {
+        "searchTerms": {
+            "title": "Termos de busca",
+            "type": "array",
+            "description": "Lista de termos para buscar no Google Maps (ex: 'clínica estética', 'restaurante italiano')",
+            "editor": "stringList",
+            "items": {
+                "type": "string"
+            },
+            "minItems": 1
+        },
+        "location": {
+            "title": "Localização",
+            "type": "string",
+            "description": "Cidade, estado e/ou país para a busca (ex: 'Campinas, SP, Brazil')",
+            "editor": "textfield"
+        },
+        "maxCrawledPlacesPerSearch": {
+            "title": "Máximo de lugares por busca",
+            "type": "integer",
+            "description": "Número máximo de lugares a serem extraídos para cada termo de busca",
+            "default": 20,
+            "minimum": 1,
+            "maximum": 500
+        },
+        "language": {
+            "title": "Idioma",
+            "type": "string",
+            "description": "Código do idioma para os resultados",
+            "default": "pt-BR",
+            "editor": "select",
+            "enum": [
+                "pt-BR",
+                "en-US",
+                "es-ES",
+                "fr-FR",
+                "de-DE"
+            ],
+            "enumTitles": [
+                "Português (Brasil)",
+                "English (US)",
+                "Español",
+                "Français",
+                "Deutsch"
+            ]
+        }
+    },
+    "required": [
+        "searchTerms",
+        "location"
+    ]
+}

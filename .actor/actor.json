@@ -1,0 +1,36 @@
+{
+    "actorSpecification": 1,
+    "name": "google-maps-scraper",
+    "title": "Google Maps Scraper",
+    "version": "1.0.0",
+    "description": "Extrai dados de estabelecimentos do Google Maps usando lista de termos de busca em uma localização específica",
+    "dockerfile": "./Dockerfile",
+    "readme": "./README.md",
+    "input": "./INPUT_SCHEMA.json",
+    "storages": {
+        "dataset": {
+            "actorSpecification": 1,
+            "title": "Google Maps Results",
+            "description": "Resultados extraídos do Google Maps",
+            "views": {
+                "default": {
+                    "title": "Todos os resultados",
+                    "transformation": {
+                        "fields": [
+                            "name",
+                            "rating",
+                            "reviewCount",
+                            "category",
+                            "address",
+                            "phone",
+                            "website",
+                            "url",
+                            "searchTerm",
+                            "location"
+                        ]
+                    }
+                }
+            }
+        }
+    }
+}
