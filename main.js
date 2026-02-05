@@ -123,9 +123,15 @@ async function extractPlaceData(page) {
             const websiteElement = document.querySelector('a[data-item-id*="authority"]');
             data.website = websiteElement ? websiteElement.href : null;
 
-            // Place ID (extrair da URL para ter um ID único)
-            const urlParams = new URLSearchParams(window.location.search);
-            data.placeId = urlParams.get('ftid') || null;
+            // Place ID (extrair da URL)
+            // Formato da URL: /maps/place/.../@lat,lng,zoom/data=!4m...!1s0xABC123:0xDEF456...
+            // O place_id está no formato "0xABC123:0xDEF456" ou como parâmetro
+            data.placeId = null;
+
+            const urlMatch = window.location.href.match(/!1s(0x[0-9a-fA-F]+:0x[0-9a-fA-F]+)/);
+            if (urlMatch) {
+                data.placeId = urlMatch[1];
+            }
 
             // URL do Google Maps
             data.url = window.location.href;

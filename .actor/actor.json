@@ -23,6 +23,7 @@
                     "transformation": {
                         "fields": [
                             "title",
+                            "placeId",
                             "totalScore",
                             "reviewsCount",
                             "categoryName",
