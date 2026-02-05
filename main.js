@@ -301,12 +301,14 @@ async function extractPlaceData(page) {
 async function scrollResults(page, maxPlaces) {
     const resultsSelector = 'div[role="feed"]';
 
+    console.log(`📜 Iniciando scroll para carregar até ${maxPlaces} lugares...`);
+
     try {
         await page.waitForSelector(resultsSelector, { timeout: 10000 });
 
         let previousHeight = 0;
         let scrollAttempts = 0;
-        const maxScrollAttempts = 50;
+        const maxScrollAttempts = 100; // Aumentado de 50 para 100
 
         while (scrollAttempts < maxScrollAttempts) {
             const currentCount = await page.evaluate((selector) => {
@@ -314,8 +316,13 @@ async function scrollResults(page, maxPlaces) {
                 return feed ? feed.querySelectorAll('div.Nv2PK').length : 0;
             }, resultsSelector);
 
+            // Log a cada 10 scrolls
+            if (scrollAttempts % 10 === 0 || currentCount >= maxPlaces) {
+                console.log(`   Scroll ${scrollAttempts}: ${currentCount} lugares carregados (meta: ${maxPlaces})`);
+            }
+
             if (currentCount >= maxPlaces) {
-                console.log(`Encontrados ${currentCount} lugares, limite atingido`);
+                console.log(`✅ Limite atingido: ${currentCount} lugares`);
                 break;
             }
 
@@ -334,15 +341,19 @@ async function scrollResults(page, maxPlaces) {
             }, resultsSelector);
 
             if (newHeight === previousHeight) {
-                console.log('Fim da lista de resultados');
+                console.log(`⚠️  Fim da lista alcançado com ${currentCount} lugares (menos que meta de ${maxPlaces})`);
                 break;
             }
 
             previousHeight = newHeight;
             scrollAttempts++;
         }
+
+        if (scrollAttempts >= maxScrollAttempts) {
+            console.log(`⚠️  Limite de tentativas de scroll atingido (${maxScrollAttempts})`);
+        }
     } catch (error) {
-        console.log('Erro ao fazer scroll:', error.message);
+        console.log('❌ Erro ao fazer scroll:', error.message);
     }
 }
 
@@ -366,7 +377,11 @@ try {
         language = 'pt-BR'
     } = input;
 
-    console.log(`Iniciando scraping com ${searchTerms.length} termo(s) de busca em ${location}`);
+    console.log(`\n🚀 Iniciando scraping`);
+    console.log(`   📍 Localização: ${location}`);
+    console.log(`   🔍 Termos de busca: ${searchTerms.length} termo(s)`);
+    console.log(`   📊 Máximo por busca: ${maxCrawledPlacesPerSearch} lugares`);
+    console.log(`   🌐 Idioma: ${language}\n`);
 
     // Inicializar navegador
     const browser = await chromium.launch({
