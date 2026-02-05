@@ -3,6 +3,76 @@ import { chromium } from 'playwright';
 
 await Actor.init();
 
+// Função para parsear endereço completo
+function parseAddress(fullAddress) {
+    if (!fullAddress) return {};
+
+    const addressParts = {
+        street: null,
+        city: null,
+        state: null,
+        postalCode: null,
+        countryCode: null,
+        fullAddress: fullAddress
+    };
+
+    try {
+        // Pattern: "Rua X, 123 - Bairro, Cidade - Estado, CEP, País"
+        const parts = fullAddress.split(',').map(p => p.trim());
+
+        if (parts.length >= 2) {
+            // Rua (primeira parte)
+            addressParts.street = parts[0];
+
+            // Última parte geralmente é o país
+            if (parts[parts.length - 1]) {
+                const lastPart = parts[parts.length - 1];
+                if (lastPart.includes('Brasil') || lastPart.includes('Brazil')) {
+                    addressParts.countryCode = 'BR';
+                }
+            }
+
+            // Procurar por CEP e estado
+            for (let i = 1; i < parts.length; i++) {
+                const part = parts[i];
+
+                // CEP brasileiro: 12345-678
+                const cepMatch = part.match(/\d{5}-\d{3}/);
+                if (cepMatch) {
+                    addressParts.postalCode = cepMatch[0];
+                }
+
+                // Estado (sigla antes do CEP): "Campinas - SP"
+                const stateMatch = part.match(/\s-\s([A-Z]{2})\b/);
+                if (stateMatch) {
+                    addressParts.state = stateMatch[1];
+                    // Cidade é o que vem antes do estado
+                    const cityMatch = part.split('-')[0].trim();
+                    if (cityMatch) {
+                        addressParts.city = cityMatch;
+                    }
+                }
+            }
+        }
+    } catch (error) {
+        console.log('Erro ao parsear endereço:', error.message);
+    }
+
+    return addressParts;
+}
+
+// Função para limpar e converter valores numéricos
+function cleanNumericValue(value) {
+    if (!value) return null;
+    if (typeof value === 'number') return value;
+
+    // Remover pontos de milhar e converter vírgula em ponto
+    const cleaned = value.toString().replace(/\./g, '').replace(',', '.');
+    const number = parseFloat(cleaned);
+
+    return isNaN(number) ? null : number;
+}
+
 // Função para esperar e extrair dados de um lugar
 async function extractPlaceData(page) {
     try {
@@ -13,7 +83,7 @@ async function extractPlaceData(page) {
 
             // Nome
             const nameElement = document.querySelector('h1.DUwDvf');
-            data.name = nameElement ? nameElement.innerText : null;
+            data.title = nameElement ? nameElement.innerText : null;
 
             // Avaliação
             const ratingElement = document.querySelector('div.F7nice span[aria-hidden="true"]');
@@ -22,17 +92,28 @@ async function extractPlaceData(page) {
             // Número de avaliações
             const reviewCountElement = document.querySelector('div.F7nice span[aria-label*="avalia"]');
             if (reviewCountElement) {
-                const match = reviewCountElement.getAttribute('aria-label').match(/\d+/);
-                data.reviewCount = match ? match[0] : null;
+                const ariaLabel = reviewCountElement.getAttribute('aria-label');
+                // Extrair todos os números e pegar o maior (que é o total de avaliações)
+                const matches = ariaLabel.match(/[\d.]+/g);
+                if (matches && matches.length > 0) {
+                    // Pegar o último número que geralmente é o total
+                    data.reviewCount = matches[matches.length - 1];
+                }
             }
 
-            // Categoria
-            const categoryElement = document.querySelector('button[jsaction*="category"]');
-            data.category = categoryElement ? categoryElement.innerText : null;
+            // Categorias (pode ter múltiplas)
+            const categoryElements = document.querySelectorAll('button[jsaction*="category"]');
+            data.categories = [];
+            categoryElements.forEach(el => {
+                const text = el.innerText.trim();
+                if (text && !data.categories.includes(text)) {
+                    data.categories.push(text);
+                }
+            });
 
-            // Endereço
+            // Endereço completo
             const addressElement = document.querySelector('button[data-item-id*="address"] div.fontBodyMedium');
-            data.address = addressElement ? addressElement.innerText : null;
+            data.fullAddress = addressElement ? addressElement.innerText : null;
 
             // Telefone
             const phoneElement = document.querySelector('button[data-item-id*="phone"] div.fontBodyMedium');
@@ -42,11 +123,41 @@ async function extractPlaceData(page) {
             const websiteElement = document.querySelector('a[data-item-id*="authority"]');
             data.website = websiteElement ? websiteElement.href : null;
 
+            // Place ID (extrair da URL para ter um ID único)
+            const urlParams = new URLSearchParams(window.location.search);
+            data.placeId = urlParams.get('ftid') || null;
+
             // URL do Google Maps
             data.url = window.location.href;
 
             return data;
         });
+
+        // Processar dados no Node.js (fora do browser context)
+        if (placeData) {
+            // Converter rating para número
+            if (placeData.rating) {
+                placeData.totalScore = cleanNumericValue(placeData.rating);
+                delete placeData.rating;
+            }
+
+            // Converter reviewCount para número
+            if (placeData.reviewCount) {
+                placeData.reviewsCount = parseInt(placeData.reviewCount.replace(/\D/g, ''), 10) || null;
+                delete placeData.reviewCount;
+            }
+
+            // Parsear endereço
+            if (placeData.fullAddress) {
+                const addressParts = parseAddress(placeData.fullAddress);
+                Object.assign(placeData, addressParts);
+            }
+
+            // Adicionar categoria principal
+            if (placeData.categories && placeData.categories.length > 0) {
+                placeData.categoryName = placeData.categories[0];
+            }
+        }
 
         return placeData;
     } catch (error) {
@@ -204,7 +315,7 @@ try {
 
                     const placeData = await extractPlaceData(page);
 
-                    if (placeData && placeData.name) {
+                    if (placeData && placeData.title) {
                         const result = {
                             searchTerm,
                             location,
@@ -214,7 +325,7 @@ try {
 
                         allResults.push(result);
                         await Actor.pushData(result);
-                        console.log(`✓ ${placeData.name}`);
+                        console.log(`✓ ${placeData.title} (${placeData.totalScore || 'N/A'} ⭐)`);
                     }
                 } catch (error) {
                     console.log(`Erro ao processar lugar: ${error.message}`);
