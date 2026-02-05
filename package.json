@@ -1,6 +1,7 @@
 {
   "name": "google-maps-scraper",
   "version": "1.0.0",
+  "type": "module",
   "description": "Actor para extrair dados do Google Maps usando lista de termos de busca",
   "main": "main.js",
   "scripts": {

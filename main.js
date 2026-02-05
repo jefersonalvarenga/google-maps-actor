@@ -128,15 +128,27 @@ try {
 
     // Inicializar navegador
     const browser = await chromium.launch({
-        headless: true
+        headless: true,
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-blink-features=AutomationControlled'
+        ]
     });
 
     const context = await browser.newContext({
         locale: language,
-        viewport: { width: 1920, height: 1080 }
+        viewport: { width: 1920, height: 1080 },
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     });
 
     const page = await context.newPage();
+
+    // Adicionar headers para parecer mais natural
+    await page.setExtraHTTPHeaders({
+        'Accept-Language': language
+    });
 
     const allResults = [];
 
@@ -149,8 +161,17 @@ try {
         const searchUrl = `https://www.google.com/maps/search/${encodeURIComponent(searchQuery)}`;
 
         try {
-            await page.goto(searchUrl, { waitUntil: 'networkidle', timeout: 30000 });
-            await page.waitForTimeout(3000);
+            // Tentar diferentes estratégias de carregamento
+            console.log(`Navegando para: ${searchUrl}`);
+
+            try {
+                await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+            } catch (gotoError) {
+                console.log(`Tentando estratégia alternativa de carregamento...`);
+                await page.goto(searchUrl, { waitUntil: 'load', timeout: 60000 });
+            }
+
+            await page.waitForTimeout(5000);
 
             // Fazer scroll para carregar mais resultados
             await scrollResults(page, maxCrawledPlacesPerSearch);
@@ -178,8 +199,8 @@ try {
                 console.log(`[${i + 1}/${placeLinks.length}] Extraindo dados de: ${link}`);
 
                 try {
-                    await page.goto(link, { waitUntil: 'networkidle', timeout: 30000 });
-                    await page.waitForTimeout(2000);
+                    await page.goto(link, { waitUntil: 'domcontentloaded', timeout: 45000 });
+                    await page.waitForTimeout(3000);
 
                     const placeData = await extractPlaceData(page);
 
