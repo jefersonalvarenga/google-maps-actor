@@ -133,6 +133,89 @@ async function extractPlaceData(page) {
                 data.placeId = urlMatch[1];
             }
 
+            // Latitude e Longitude (extrair da URL)
+            // Formato: /@-22.8925795,-47.0487806,17z
+            data.latitude = null;
+            data.longitude = null;
+            const coordMatch = window.location.href.match(/@(-?\d+\.\d+),(-?\d+\.\d+),/);
+            if (coordMatch) {
+                data.latitude = coordMatch[1];
+                data.longitude = coordMatch[2];
+            }
+
+            // Price Level (extrair símbolo de $)
+            // Pode aparecer como $, $$, $$$, $$$$
+            data.priceLevel = null;
+            const priceLevelElement = document.querySelector('span[aria-label*="Preço:"], span[aria-label*="Price:"]');
+            if (priceLevelElement) {
+                const priceText = priceLevelElement.getAttribute('aria-label');
+                const priceMatch = priceText.match(/\$+/);
+                if (priceMatch) {
+                    data.priceLevel = priceMatch[0];
+                }
+            }
+
+            // Services/Opções (delivery, dine-in, etc)
+            data.services = [];
+            const serviceElements = document.querySelectorAll('div[aria-label*="opções"], div[class*="accessibility"], button[aria-label]');
+            serviceElements.forEach(el => {
+                const ariaLabel = el.getAttribute('aria-label');
+                if (ariaLabel) {
+                    // Procurar por palavras-chave de serviços
+                    if (/entrega|delivery/i.test(ariaLabel)) {
+                        data.services.push('delivery');
+                    }
+                    if (/retirada|takeout|para viagem/i.test(ariaLabel)) {
+                        data.services.push('takeout');
+                    }
+                    if (/consumo no local|dine.?in/i.test(ariaLabel)) {
+                        data.services.push('dine-in');
+                    }
+                    if (/acessível.*cadeira|wheelchair/i.test(ariaLabel)) {
+                        data.services.push('wheelchair-accessible');
+                    }
+                }
+            });
+            // Remover duplicatas
+            data.services = [...new Set(data.services)];
+
+            // Rating Distribution (distribuição de estrelas)
+            data.ratingDistribution = null;
+            try {
+                // Procurar pela seção de reviews que contém os gráficos de barras
+                const ratingBars = document.querySelectorAll('tr[aria-label*="estrela"], tr[aria-label*="star"]');
+                if (ratingBars.length > 0) {
+                    const distribution = {};
+                    ratingBars.forEach(bar => {
+                        const label = bar.getAttribute('aria-label');
+                        // Extrair: "5 estrelas, 70%" ou "5 stars, 70%"
+                        const match = label.match(/(\d)\s+\w+,\s*(\d+)%/);
+                        if (match) {
+                            const stars = match[1];
+                            const percentage = parseInt(match[2], 10);
+                            distribution[`${stars}stars`] = percentage;
+                        }
+                    });
+                    if (Object.keys(distribution).length > 0) {
+                        data.ratingDistribution = distribution;
+                    }
+                }
+            } catch (e) {
+                // Ignorar erros na extração de rating distribution
+            }
+
+            // Business Status (verificar se está permanentemente fechado)
+            data.businessStatus = 'OPERATIONAL';
+            const closedPermanentlyElement = document.querySelector('[class*="closed"], [aria-label*="Permanentemente fechado"], [aria-label*="Permanently closed"]');
+            if (closedPermanentlyElement) {
+                const text = closedPermanentlyElement.innerText || closedPermanentlyElement.getAttribute('aria-label');
+                if (/permanentemente fechado|permanently closed/i.test(text)) {
+                    data.businessStatus = 'CLOSED_PERMANENTLY';
+                } else if (/temporariamente fechado|temporarily closed/i.test(text)) {
+                    data.businessStatus = 'CLOSED_TEMPORARILY';
+                }
+            }
+
             // URL do Google Maps
             data.url = window.location.href;
 
@@ -151,6 +234,14 @@ async function extractPlaceData(page) {
             if (placeData.reviewCount) {
                 placeData.reviewsCount = parseInt(placeData.reviewCount.replace(/\D/g, ''), 10) || null;
                 delete placeData.reviewCount;
+            }
+
+            // Converter latitude e longitude para números
+            if (placeData.latitude) {
+                placeData.latitude = parseFloat(placeData.latitude);
+            }
+            if (placeData.longitude) {
+                placeData.longitude = parseFloat(placeData.longitude);
             }
 
             // Parsear endereço
