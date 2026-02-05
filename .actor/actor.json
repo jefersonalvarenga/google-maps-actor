@@ -7,6 +7,11 @@
     "dockerfile": "./Dockerfile",
     "readme": "./README.md",
     "input": "./INPUT_SCHEMA.json",
+    "defaultRunOptions": {
+        "build": "latest",
+        "timeoutSecs": 3600,
+        "memoryMbytes": 2048
+    },
     "storages": {
         "dataset": {
             "actorSpecification": 1,
@@ -17,11 +22,14 @@
                     "title": "Todos os resultados",
                     "transformation": {
                         "fields": [
-                            "name",
-                            "rating",
-                            "reviewCount",
-                            "category",
-                            "address",
+                            "title",
+                            "totalScore",
+                            "reviewsCount",
+                            "categoryName",
+                            "street",
+                            "city",
+                            "state",
+                            "postalCode",
                             "phone",
                             "website",
                             "url",
