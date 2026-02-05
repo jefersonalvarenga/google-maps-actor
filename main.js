@@ -73,10 +73,44 @@ function cleanNumericValue(value) {
     return isNaN(number) ? null : number;
 }
 
+// Função para tentar fechar popups e modais
+async function closePopups(page) {
+    try {
+        // Tentar fechar cookie consent
+        const cookieButton = await page.$('button[aria-label*="Aceitar"], button[aria-label*="Accept"], button:has-text("Aceitar tudo")');
+        if (cookieButton) {
+            await cookieButton.click();
+            await page.waitForTimeout(500);
+        }
+
+        // Tentar fechar outros modais comuns
+        const closeButtons = await page.$$('button[aria-label*="Fechar"], button[aria-label*="Close"], button[aria-label="Dispensar"]');
+        for (const button of closeButtons) {
+            try {
+                await button.click({ timeout: 500 });
+            } catch (e) {
+                // Ignorar se não conseguir clicar
+            }
+        }
+    } catch (e) {
+        // Ignorar erros ao tentar fechar popups
+    }
+}
+
 // Função para esperar e extrair dados de um lugar
 async function extractPlaceData(page) {
     try {
-        await page.waitForSelector('[role="main"]', { timeout: 5000 });
+        // Tentar fechar popups primeiro
+        await closePopups(page);
+
+        // Tentar esperar por múltiplos seletores (fallback strategy)
+        try {
+            await page.waitForSelector('[role="main"]', { timeout: 10000 });
+        } catch (e) {
+            // Se role="main" não aparecer, tentar esperar pelo título
+            console.log('Seletor [role="main"] não encontrado, tentando alternativa...');
+            await page.waitForSelector('h1.DUwDvf, h1[class*="fontHeadline"]', { timeout: 5000 });
+        }
 
         const placeData = await page.evaluate(() => {
             const data = {};
@@ -408,7 +442,9 @@ try {
 
                 try {
                     await page.goto(link, { waitUntil: 'domcontentloaded', timeout: 45000 });
-                    await page.waitForTimeout(3000);
+
+                    // Esperar um pouco mais para garantir que o conteúdo carregue
+                    await page.waitForTimeout(4000);
 
                     const placeData = await extractPlaceData(page);
 
@@ -423,9 +459,12 @@ try {
                         allResults.push(result);
                         await Actor.pushData(result);
                         console.log(`✓ ${placeData.title} (${placeData.totalScore || 'N/A'} ⭐)`);
+                    } else {
+                        console.log(`⚠️  Lugar sem dados válidos (título não encontrado)`);
                     }
                 } catch (error) {
-                    console.log(`Erro ao processar lugar: ${error.message}`);
+                    console.log(`❌ Erro ao processar lugar: ${error.message}`);
+                    // Continuar para o próximo lugar mesmo com erro
                 }
             }
 
