@@ -3,6 +3,33 @@ import { chromium } from 'playwright';
 
 await Actor.init();
 
+// Função para buscar Place ID via Google Places API usando coordenadas
+async function fetchPlaceIdFromCoordinates(latitude, longitude, googleApiKey) {
+    if (!googleApiKey || !latitude || !longitude) {
+        return null;
+    }
+
+    try {
+        const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${googleApiKey}`;
+
+        const response = await fetch(url);
+        const data = await response.json();
+
+        if (data.status === 'OK' && data.results && data.results.length > 0) {
+            // Pegar o primeiro resultado que geralmente é o mais específico
+            const placeId = data.results[0].place_id;
+            console.log(`   ✓ Place ID encontrado via API: ${placeId}`);
+            return placeId;
+        } else {
+            console.log(`   ⚠️  Google API retornou status: ${data.status}`);
+            return null;
+        }
+    } catch (error) {
+        console.log(`   ❌ Erro ao buscar Place ID via API: ${error.message}`);
+        return null;
+    }
+}
+
 // Função para parsear endereço completo
 function parseAddress(fullAddress) {
     if (!fullAddress) return {};
@@ -98,7 +125,7 @@ async function closePopups(page) {
 }
 
 // Função para esperar e extrair dados de um lugar
-async function extractPlaceData(page) {
+async function extractPlaceData(page, googleApiKey = null) {
     try {
         // Tentar fechar popups primeiro
         await closePopups(page);
@@ -311,6 +338,16 @@ async function extractPlaceData(page) {
             if (placeData.categories && placeData.categories.length > 0) {
                 placeData.categoryName = placeData.categories[0];
             }
+
+            // Buscar Place ID via Google Places API se não encontrado na URL
+            if (!placeData.placeId && googleApiKey && placeData.latitude && placeData.longitude) {
+                console.log(`   🔍 Place ID não encontrado na URL, consultando Google Places API...`);
+                placeData.placeId = await fetchPlaceIdFromCoordinates(
+                    placeData.latitude,
+                    placeData.longitude,
+                    googleApiKey
+                );
+            }
         }
 
         return placeData;
@@ -397,7 +434,8 @@ try {
         searchTerms,
         location,
         maxCrawledPlacesPerSearch = 20,
-        language = 'pt-BR'
+        language = 'pt-BR',
+        googleApiKey = null
     } = input;
 
     console.log(`\n🚀 Iniciando scraping`);
@@ -484,7 +522,7 @@ try {
                     // Esperar um pouco mais para garantir que o conteúdo carregue
                     await page.waitForTimeout(4000);
 
-                    const placeData = await extractPlaceData(page);
+                    const placeData = await extractPlaceData(page, googleApiKey);
 
                     if (placeData && placeData.title) {
                         const result = {
