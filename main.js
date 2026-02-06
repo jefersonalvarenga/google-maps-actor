@@ -157,14 +157,37 @@ async function extractPlaceData(page) {
             const websiteElement = document.querySelector('a[data-item-id*="authority"]');
             data.website = websiteElement ? websiteElement.href : null;
 
-            // Place ID (extrair da URL)
-            // Formato da URL: /maps/place/.../@lat,lng,zoom/data=!4m...!1s0xABC123:0xDEF456...
-            // O place_id está no formato "0xABC123:0xDEF456" ou como parâmetro
+            // CID - Customer ID (formato hex: 0xABC:0xDEF)
+            data.cid = null;
+            const cidMatch = window.location.href.match(/!1s(0x[0-9a-fA-F]+:0x[0-9a-fA-F]+)/);
+            if (cidMatch) {
+                data.cid = cidMatch[1];
+            }
+
+            // Place ID oficial da Google Places API (formato: ChIJ...)
+            // Buscar em vários formatos possíveis na URL
             data.placeId = null;
 
-            const urlMatch = window.location.href.match(/!1s(0x[0-9a-fA-F]+:0x[0-9a-fA-F]+)/);
-            if (urlMatch) {
-                data.placeId = urlMatch[1];
+            // Formato 1: !19sChIJ... (mais comum)
+            const placeIdMatch1 = window.location.href.match(/!19s(ChIJ[A-Za-z0-9_-]+)/);
+            if (placeIdMatch1) {
+                data.placeId = placeIdMatch1[1];
+            }
+
+            // Formato 2: query parameter ftid=ChIJ...
+            if (!data.placeId) {
+                const urlParams = new URLSearchParams(window.location.search);
+                const ftid = urlParams.get('ftid');
+                if (ftid && ftid.startsWith('ChIJ')) {
+                    data.placeId = ftid;
+                }
+            }
+
+            // Knowledge Graph ID (formato: /g/11...)
+            data.kgmid = null;
+            const kgmidMatch = window.location.href.match(/!16s%2Fg%2F([a-zA-Z0-9_-]+)/);
+            if (kgmidMatch) {
+                data.kgmid = `/g/${kgmidMatch[1]}`;
             }
 
             // Latitude e Longitude (extrair da URL)

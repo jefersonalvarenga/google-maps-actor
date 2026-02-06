@@ -24,6 +24,8 @@
                         "fields": [
                             "title",
                             "placeId",
+                            "cid",
+                            "kgmid",
                             "totalScore",
                             "reviewsCount",
                             "ratingDistribution",
