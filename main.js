@@ -3,33 +3,6 @@ import { chromium } from 'playwright';
 
 await Actor.init();
 
-// Função para buscar Place ID via Google Places API usando coordenadas
-async function fetchPlaceIdFromCoordinates(latitude, longitude, googleApiKey) {
-    if (!googleApiKey || !latitude || !longitude) {
-        return null;
-    }
-
-    try {
-        const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${googleApiKey}`;
-
-        const response = await fetch(url);
-        const data = await response.json();
-
-        if (data.status === 'OK' && data.results && data.results.length > 0) {
-            // Pegar o primeiro resultado que geralmente é o mais específico
-            const placeId = data.results[0].place_id;
-            console.log(`   ✓ Place ID encontrado via API: ${placeId}`);
-            return placeId;
-        } else {
-            console.log(`   ⚠️  Google API retornou status: ${data.status}`);
-            return null;
-        }
-    } catch (error) {
-        console.log(`   ❌ Erro ao buscar Place ID via API: ${error.message}`);
-        return null;
-    }
-}
-
 // Função para parsear endereço completo
 function parseAddress(fullAddress) {
     if (!fullAddress) return {};
@@ -38,9 +11,9 @@ function parseAddress(fullAddress) {
         street: null,
         city: null,
         state: null,
-        postalCode: null,
-        countryCode: null,
-        fullAddress: fullAddress
+        postal_code: null,
+        country_code: null,
+        full_address: fullAddress
     };
 
     try {
@@ -55,7 +28,7 @@ function parseAddress(fullAddress) {
             if (parts[parts.length - 1]) {
                 const lastPart = parts[parts.length - 1];
                 if (lastPart.includes('Brasil') || lastPart.includes('Brazil')) {
-                    addressParts.countryCode = 'BR';
+                    addressParts.country_code = 'BR';
                 }
             }
 
@@ -66,7 +39,7 @@ function parseAddress(fullAddress) {
                 // CEP brasileiro: 12345-678
                 const cepMatch = part.match(/\d{5}-\d{3}/);
                 if (cepMatch) {
-                    addressParts.postalCode = cepMatch[0];
+                    addressParts.postal_code = cepMatch[0];
                 }
 
                 // Estado (sigla antes do CEP): "Campinas - SP"
@@ -125,7 +98,7 @@ async function closePopups(page) {
 }
 
 // Função para esperar e extrair dados de um lugar
-async function extractPlaceData(page, googleApiKey = null) {
+async function extractPlaceData(page) {
     try {
         // Tentar fechar popups primeiro
         await closePopups(page);
@@ -144,7 +117,7 @@ async function extractPlaceData(page, googleApiKey = null) {
 
             // Nome
             const nameElement = document.querySelector('h1.DUwDvf');
-            data.title = nameElement ? nameElement.innerText : null;
+            data.name = nameElement ? nameElement.innerText : null;
 
             // Avaliação
             const ratingElement = document.querySelector('div.F7nice span[aria-hidden="true"]');
@@ -158,7 +131,7 @@ async function extractPlaceData(page, googleApiKey = null) {
                 const matches = ariaLabel.match(/[\d.]+/g);
                 if (matches && matches.length > 0) {
                     // Pegar o último número que geralmente é o total
-                    data.reviewCount = matches[matches.length - 1];
+                    data.reviews_count = matches[matches.length - 1];
                 }
             }
 
@@ -174,7 +147,7 @@ async function extractPlaceData(page, googleApiKey = null) {
 
             // Endereço completo
             const addressElement = document.querySelector('button[data-item-id*="address"] div.fontBodyMedium');
-            data.fullAddress = addressElement ? addressElement.innerText : null;
+            data.full_address = addressElement ? addressElement.innerText : null;
 
             // Telefone
             const phoneElement = document.querySelector('button[data-item-id*="phone"] div.fontBodyMedium');
@@ -192,39 +165,59 @@ async function extractPlaceData(page, googleApiKey = null) {
             }
 
             // Place ID oficial da Google Places API (formato: ChIJ...)
-            // Buscar em vários formatos possíveis na URL
-            data.placeId = null;
+            // Extrair do estado JavaScript da página (mais confiável que URL)
+            data.place_id = null;
 
-            // Formato 1: !19sChIJ... (mais comum)
-            // Place ID pode conter: letras, números, _ e -
-            // Exemplo: ChIJwblXdZLPyJQRYEU85ldSb2Q
-            const placeIdMatch1 = window.location.href.match(/!19s(ChIJ[\w-]+)/);
-            if (placeIdMatch1) {
-                data.placeId = placeIdMatch1[1];
-            }
-
-            // Formato 2: query parameter ftid=ChIJ...
-            if (!data.placeId) {
-                const urlParams = new URLSearchParams(window.location.search);
-                const ftid = urlParams.get('ftid');
-                if (ftid && ftid.startsWith('ChIJ')) {
-                    data.placeId = ftid;
+            try {
+                // Método 1: Extrair de APP_INITIALIZATION_STATE
+                if (window.APP_INITIALIZATION_STATE) {
+                    const stateString = JSON.stringify(window.APP_INITIALIZATION_STATE);
+                    const placeIdMatch = stateString.match(/"ChIJ[\w-]+"/g);
+                    if (placeIdMatch && placeIdMatch.length > 0) {
+                        // Pegar o primeiro PlaceId encontrado e remover aspas
+                        data.place_id = placeIdMatch[0].replace(/"/g, '');
+                    }
                 }
-            }
 
-            // Formato 3: procurar ChIJ em qualquer parte da URL
-            if (!data.placeId) {
-                const generalMatch = window.location.href.match(/ChIJ[\w-]+/);
-                if (generalMatch) {
-                    data.placeId = generalMatch[0];
+                // Método 2: Extrair de _pageData (fallback)
+                if (!data.place_id && window._pageData) {
+                    const pageDataString = JSON.stringify(window._pageData);
+                    const placeIdMatch = pageDataString.match(/"ChIJ[\w-]+"/g);
+                    if (placeIdMatch && placeIdMatch.length > 0) {
+                        data.place_id = placeIdMatch[0].replace(/"/g, '');
+                    }
                 }
+
+                // Método 3: Buscar em todos os scripts da página
+                if (!data.place_id) {
+                    const scripts = Array.from(document.querySelectorAll('script'));
+                    for (const script of scripts) {
+                        if (script.textContent) {
+                            const placeIdMatch = script.textContent.match(/ChIJ[\w-]{20,}/);
+                            if (placeIdMatch) {
+                                data.place_id = placeIdMatch[0];
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // Método 4: Fallback para URL (último recurso)
+                if (!data.place_id) {
+                    const urlMatch = window.location.href.match(/ChIJ[\w-]+/);
+                    if (urlMatch) {
+                        data.place_id = urlMatch[0];
+                    }
+                }
+            } catch (e) {
+                console.log('Erro ao extrair Place ID:', e.message);
             }
 
             // Knowledge Graph ID (formato: /g/11...)
-            data.kgmid = null;
+            data.knowledge_graph_id = null;
             const kgmidMatch = window.location.href.match(/!16s%2Fg%2F([a-zA-Z0-9_-]+)/);
             if (kgmidMatch) {
-                data.kgmid = `/g/${kgmidMatch[1]}`;
+                data.knowledge_graph_id = `/g/${kgmidMatch[1]}`;
             }
 
             // Latitude e Longitude (extrair da URL)
@@ -239,13 +232,13 @@ async function extractPlaceData(page, googleApiKey = null) {
 
             // Price Level (extrair símbolo de $)
             // Pode aparecer como $, $$, $$$, $$$$
-            data.priceLevel = null;
+            data.price_level = null;
             const priceLevelElement = document.querySelector('span[aria-label*="Preço:"], span[aria-label*="Price:"]');
             if (priceLevelElement) {
                 const priceText = priceLevelElement.getAttribute('aria-label');
                 const priceMatch = priceText.match(/\$+/);
                 if (priceMatch) {
-                    data.priceLevel = priceMatch[0];
+                    data.price_level = priceMatch[0];
                 }
             }
 
@@ -274,7 +267,7 @@ async function extractPlaceData(page, googleApiKey = null) {
             data.services = [...new Set(data.services)];
 
             // Rating Distribution (distribuição de estrelas)
-            data.ratingDistribution = null;
+            data.rating_distribution = null;
             try {
                 // Procurar pela seção de reviews que contém os gráficos de barras
                 const ratingBars = document.querySelectorAll('tr[aria-label*="estrela"], tr[aria-label*="star"]');
@@ -291,7 +284,7 @@ async function extractPlaceData(page, googleApiKey = null) {
                         }
                     });
                     if (Object.keys(distribution).length > 0) {
-                        data.ratingDistribution = distribution;
+                        data.rating_distribution = distribution;
                     }
                 }
             } catch (e) {
@@ -299,19 +292,19 @@ async function extractPlaceData(page, googleApiKey = null) {
             }
 
             // Business Status (verificar se está permanentemente fechado)
-            data.businessStatus = 'OPERATIONAL';
+            data.business_status = 'OPERATIONAL';
             const closedPermanentlyElement = document.querySelector('[class*="closed"], [aria-label*="Permanentemente fechado"], [aria-label*="Permanently closed"]');
             if (closedPermanentlyElement) {
                 const text = closedPermanentlyElement.innerText || closedPermanentlyElement.getAttribute('aria-label');
                 if (/permanentemente fechado|permanently closed/i.test(text)) {
-                    data.businessStatus = 'CLOSED_PERMANENTLY';
+                    data.business_status = 'CLOSED_PERMANENTLY';
                 } else if (/temporariamente fechado|temporarily closed/i.test(text)) {
-                    data.businessStatus = 'CLOSED_TEMPORARILY';
+                    data.business_status = 'CLOSED_TEMPORARILY';
                 }
             }
 
             // URL do Google Maps
-            data.url = window.location.href;
+            data.google_maps_url = window.location.href;
 
             return data;
         });
@@ -320,14 +313,12 @@ async function extractPlaceData(page, googleApiKey = null) {
         if (placeData) {
             // Converter rating para número
             if (placeData.rating) {
-                placeData.totalScore = cleanNumericValue(placeData.rating);
-                delete placeData.rating;
+                placeData.rating = cleanNumericValue(placeData.rating);
             }
 
-            // Converter reviewCount para número
-            if (placeData.reviewCount) {
-                placeData.reviewsCount = parseInt(placeData.reviewCount.replace(/\D/g, ''), 10) || null;
-                delete placeData.reviewCount;
+            // Converter reviews_count para número
+            if (placeData.reviews_count) {
+                placeData.reviews_count = parseInt(placeData.reviews_count.replace(/\D/g, ''), 10) || null;
             }
 
             // Converter latitude e longitude para números
@@ -339,24 +330,14 @@ async function extractPlaceData(page, googleApiKey = null) {
             }
 
             // Parsear endereço
-            if (placeData.fullAddress) {
-                const addressParts = parseAddress(placeData.fullAddress);
+            if (placeData.full_address) {
+                const addressParts = parseAddress(placeData.full_address);
                 Object.assign(placeData, addressParts);
             }
 
             // Adicionar categoria principal
             if (placeData.categories && placeData.categories.length > 0) {
-                placeData.categoryName = placeData.categories[0];
-            }
-
-            // Buscar Place ID via Google Places API se não encontrado na URL
-            if (!placeData.placeId && googleApiKey && placeData.latitude && placeData.longitude) {
-                console.log(`   🔍 Place ID não encontrado na URL, consultando Google Places API...`);
-                placeData.placeId = await fetchPlaceIdFromCoordinates(
-                    placeData.latitude,
-                    placeData.longitude,
-                    googleApiKey
-                );
+                placeData.category_primary = placeData.categories[0];
             }
         }
 
@@ -444,8 +425,7 @@ try {
         searchTerms,
         location,
         maxCrawledPlacesPerSearch = 20,
-        language = 'pt-BR',
-        googleApiKey = null
+        language = 'pt-BR'
     } = input;
 
     console.log(`\n🚀 Iniciando scraping`);
@@ -532,21 +512,21 @@ try {
                     // Esperar um pouco mais para garantir que o conteúdo carregue
                     await page.waitForTimeout(4000);
 
-                    const placeData = await extractPlaceData(page, googleApiKey);
+                    const placeData = await extractPlaceData(page);
 
-                    if (placeData && placeData.title) {
+                    if (placeData && placeData.name) {
                         const result = {
-                            searchTerm,
+                            search_term: searchTerm,
                             location,
                             ...placeData,
-                            scrapedAt: new Date().toISOString()
+                            scraped_at: new Date().toISOString()
                         };
 
                         allResults.push(result);
                         await Actor.pushData(result);
-                        console.log(`✓ ${placeData.title} (${placeData.totalScore || 'N/A'} ⭐)`);
+                        console.log(`✓ ${placeData.name} (${placeData.rating || 'N/A'} ⭐)`);
                     } else {
-                        console.log(`⚠️  Lugar sem dados válidos (título não encontrado)`);
+                        console.log(`⚠️  Lugar sem dados válidos (nome não encontrado)`);
                     }
                 } catch (error) {
                     console.log(`❌ Erro ao processar lugar: ${error.message}`);

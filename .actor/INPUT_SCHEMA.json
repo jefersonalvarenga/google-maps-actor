@@ -47,13 +47,6 @@
                 "Français",
                 "Deutsch"
             ]
-        },
-        "googleApiKey": {
-            "title": "Google API Key (opcional)",
-            "type": "string",
-            "description": "API Key do Google Places para buscar Place ID quando não disponível na URL. Obtenha em: https://console.cloud.google.com/apis/credentials",
-            "editor": "textfield",
-            "isSecret": true
         }
     },
     "required": [
