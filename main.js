@@ -196,7 +196,9 @@ async function extractPlaceData(page, googleApiKey = null) {
             data.placeId = null;
 
             // Formato 1: !19sChIJ... (mais comum)
-            const placeIdMatch1 = window.location.href.match(/!19s(ChIJ[A-Za-z0-9_-]+)/);
+            // Place ID pode conter: letras, números, _ e -
+            // Exemplo: ChIJwblXdZLPyJQRYEU85ldSb2Q
+            const placeIdMatch1 = window.location.href.match(/!19s(ChIJ[\w-]+)/);
             if (placeIdMatch1) {
                 data.placeId = placeIdMatch1[1];
             }
@@ -207,6 +209,14 @@ async function extractPlaceData(page, googleApiKey = null) {
                 const ftid = urlParams.get('ftid');
                 if (ftid && ftid.startsWith('ChIJ')) {
                     data.placeId = ftid;
+                }
+            }
+
+            // Formato 3: procurar ChIJ em qualquer parte da URL
+            if (!data.placeId) {
+                const generalMatch = window.location.href.match(/ChIJ[\w-]+/);
+                if (generalMatch) {
+                    data.placeId = generalMatch[0];
                 }
             }
 
