@@ -47,6 +47,13 @@
                 "Français",
                 "Deutsch"
             ]
+        },
+        "userData": {
+            "title": "Dados personalizados (opcional)",
+            "type": "object",
+            "description": "Objeto JSON com dados adicionais que serão incluídos em cada resultado (ex: search_run_id, campaign_id, etc)",
+            "editor": "json",
+            "prefill": {}
         }
     },
     "required": [

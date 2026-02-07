@@ -425,7 +425,8 @@ try {
         searchTerms,
         location,
         maxCrawledPlacesPerSearch = 20,
-        language = 'pt-BR'
+        language = 'pt-BR',
+        userData = {}
     } = input;
 
     console.log(`\n🚀 Iniciando scraping`);
@@ -519,6 +520,7 @@ try {
                             search_term: searchTerm,
                             location,
                             ...placeData,
+                            ...userData,
                             scraped_at: new Date().toISOString()
                         };
 
