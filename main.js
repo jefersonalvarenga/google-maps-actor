@@ -124,14 +124,34 @@ async function extractPlaceData(page) {
             data.rating = ratingElement ? ratingElement.innerText : null;
 
             // Número de avaliações
-            const reviewCountElement = document.querySelector('div.F7nice span[aria-label*="avalia"]');
+            // Tentar múltiplos seletores para suportar diferentes idiomas
+            let reviewCountElement = document.querySelector('div.F7nice span[aria-label*="avalia"]') || // Português
+                                     document.querySelector('div.F7nice span[aria-label*="review"]') || // Inglês
+                                     document.querySelector('div.F7nice span[aria-label*="reseña"]') || // Espanhol
+                                     document.querySelector('button[aria-label*="avalia"]') ||
+                                     document.querySelector('button[aria-label*="review"]');
+
             if (reviewCountElement) {
                 const ariaLabel = reviewCountElement.getAttribute('aria-label');
-                // Extrair todos os números e pegar o maior (que é o total de avaliações)
+                // Extrair números (ex: "4,5 estrelas 1.234 avaliações" -> ["4", "5", "1", "234"])
                 const matches = ariaLabel.match(/[\d.]+/g);
                 if (matches && matches.length > 0) {
-                    // Pegar o último número que geralmente é o total
+                    // Pegar o último número que geralmente é o total de avaliações
                     data.reviews_count = matches[matches.length - 1];
+                }
+            }
+
+            // Fallback: tentar pegar do texto visível próximo ao rating
+            if (!data.reviews_count) {
+                const reviewTexts = Array.from(document.querySelectorAll('div.F7nice *'));
+                for (const el of reviewTexts) {
+                    const text = el.textContent || '';
+                    // Procurar padrões como "(1.234)" ou "1.234 avaliações"
+                    const match = text.match(/\(?([\d.]+)\)?(?:\s*(?:avalia|review|reseña))?/i);
+                    if (match && match[1] && match[1].length >= 2) {
+                        data.reviews_count = match[1];
+                        break;
+                    }
                 }
             }
 
