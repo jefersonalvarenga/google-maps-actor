@@ -105,19 +105,20 @@ async function extractPlaceData(page) {
 
         // Tentar esperar por múltiplos seletores (fallback strategy)
         try {
-            await page.waitForSelector('[role="main"]', { timeout: 10000 });
+            await page.waitForSelector('h1.DUwDvf, h1[class*="fontHeadline"], [role="main"] h1', { timeout: 10000 });
         } catch (e) {
-            // Se role="main" não aparecer, tentar esperar pelo título
-            console.log('Seletor [role="main"] não encontrado, tentando alternativa...');
-            await page.waitForSelector('h1.DUwDvf, h1[class*="fontHeadline"]', { timeout: 5000 });
+            console.log('Seletor do título não encontrado, aguardando mais 3s...');
+            await page.waitForTimeout(3000);
         }
 
         const placeData = await page.evaluate(() => {
             const data = {};
 
-            // Nome
-            const nameElement = document.querySelector('h1.DUwDvf');
-            data.name = nameElement ? nameElement.innerText : null;
+            // Nome (múltiplos seletores como fallback)
+            const nameElement = document.querySelector('h1.DUwDvf') ||
+                                document.querySelector('h1[class*="fontHeadline"]') ||
+                                document.querySelector('[role="main"] h1');
+            data.name = nameElement ? nameElement.innerText.trim() : null;
 
             // Avaliação
             const ratingElement = document.querySelector('div.F7nice span[aria-hidden="true"]');
