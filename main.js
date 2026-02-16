@@ -482,6 +482,7 @@ try {
     });
 
     const allResults = [];
+    const seenPlaceIds = new Set(); // Para deduplicação por place_id na execução
 
     // Iterar sobre cada termo de busca
     for (const searchTerm of searchTerms) {
@@ -502,7 +503,8 @@ try {
                 await page.goto(searchUrl, { waitUntil: 'load', timeout: 60000 });
             }
 
-            await page.waitForTimeout(5000);
+            // Aguardar os resultados aparecerem antes de fazer scroll
+            await page.waitForSelector('div[role="feed"] a[href*="/maps/place/"]', { timeout: 15000 });
 
             // Fazer scroll para carregar mais resultados
             await scrollResults(page, maxCrawledPlacesPerSearch);
@@ -532,12 +534,16 @@ try {
                 try {
                     await page.goto(link, { waitUntil: 'domcontentloaded', timeout: 45000 });
 
-                    // Esperar um pouco mais para garantir que o conteúdo carregue
-                    await page.waitForTimeout(4000);
-
                     const placeData = await extractPlaceData(page);
 
                     if (placeData && placeData.name) {
+                        // Deduplicação por place_id na execução atual
+                        const dedupeKey = placeData.place_id || placeData.cid || link;
+                        if (seenPlaceIds.has(dedupeKey)) {
+                            console.log(`⏭️  ${placeData.name} ignorado (duplicado)`);
+                        } else {
+                        seenPlaceIds.add(dedupeKey);
+
                         if (onlyWithWebsite && !placeData.website) {
                             console.log(`⏭️  ${placeData.name} ignorado (sem website)`);
                         } else {
@@ -552,7 +558,8 @@ try {
                         allResults.push(result);
                         await Actor.pushData(result);
                         console.log(`✓ ${placeData.name} (${placeData.rating || 'N/A'} ⭐)`);
-                        }
+                        } // fim onlyWithWebsite
+                        } // fim dedupe
                     } else {
                         console.log(`⚠️  Lugar sem dados válidos (nome não encontrado)`);
                     }
