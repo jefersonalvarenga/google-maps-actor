@@ -446,6 +446,7 @@ try {
         location,
         maxCrawledPlacesPerSearch = 20,
         language = 'pt-BR',
+        onlyWithWebsite = false,
         userData = {}
     } = input;
 
@@ -536,6 +537,9 @@ try {
                     const placeData = await extractPlaceData(page);
 
                     if (placeData && placeData.name) {
+                        if (onlyWithWebsite && !placeData.website) {
+                            console.log(`⏭️  ${placeData.name} ignorado (sem website)`);
+                        } else {
                         const result = {
                             search_term: searchTerm,
                             location,
@@ -547,6 +551,7 @@ try {
                         allResults.push(result);
                         await Actor.pushData(result);
                         console.log(`✓ ${placeData.name} (${placeData.rating || 'N/A'} ⭐)`);
+                        }
                     } else {
                         console.log(`⚠️  Lugar sem dados válidos (nome não encontrado)`);
                     }

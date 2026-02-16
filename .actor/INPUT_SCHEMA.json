@@ -48,6 +48,13 @@
                 "Deutsch"
             ]
         },
+        "onlyWithWebsite": {
+            "title": "Apenas com website",
+            "type": "boolean",
+            "description": "Se ativo, ignora lugares que não possuem website cadastrado no Google Maps",
+            "default": false,
+            "editor": "checkbox"
+        },
         "userData": {
             "title": "Dados personalizados (opcional)",
             "type": "object",
