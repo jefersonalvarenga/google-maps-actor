@@ -15,6 +15,8 @@ function cleanNumericValue(value) {
 
 function parseAddress(fullAddress) {
     if (!fullAddress) return {};
+    // Limpar caracteres Unicode invisíveis (LRM, RLM, bidi overrides, BOM, etc.)
+    fullAddress = fullAddress.replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, '').trim();
     const addressParts = {
         street: null,
         city: null,
@@ -386,7 +388,8 @@ async function extractPlaceDataFromPanel(page) {
 
         // ── Endereço ──────────────────────────────────────────────────────────
         const addrEl = document.querySelector('button[data-item-id="address"]');
-        const full_address = addrEl?.textContent?.trim() || null;
+        // Remover caracteres Unicode invisíveis que o Google injeta (LRM \u200e, etc.)
+        const full_address = addrEl?.textContent?.replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, '').trim() || null;
 
         // ── Categoria ─────────────────────────────────────────────────────────
         const categoryEl = document.querySelector('button[jsaction*="category"], span.DkEaL');
