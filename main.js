@@ -578,12 +578,15 @@ try {
         userData = {}
     } = input;
 
-    console.log(`\n🚀 Iniciando scraping (modo híbrido: browser p/ busca + fetch paralelo p/ detalhes)`);
+    console.log(`\n🚀 Iniciando scraping`);
     console.log(`   📍 Localização: ${location}`);
     console.log(`   🔍 Termos de busca: ${searchTerms.length} termo(s)`);
     console.log(`   📊 Máximo por busca: ${maxCrawledPlacesPerSearch} lugares`);
-    console.log(`   ⚡ Concorrência: ${concurrency} requests paralelos`);
-    console.log(`   🌐 Idioma: ${language}\n`);
+    console.log(`   🌐 Idioma: ${language}`);
+    if (Object.keys(userData).length > 0) {
+        console.log(`   🏷️  userData: ${JSON.stringify(userData)}`);
+    }
+    console.log();
 
     const allResults = [];
     const seenPlaceIds = new Set();
