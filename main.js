@@ -429,12 +429,8 @@ async function extractPlace(page, link, label) {
     // Extrair o que der da URL antes de carregar a página
     const fromUrl = extractFromUrl(link);
 
-    const t0 = Date.now();
     await page.goto(link, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    const t1 = Date.now();
     const panelData = await extractPlaceDataFromPanel(page);
-    const t2 = Date.now();
-    console.log(`   ⏱  ${label} goto=${t1-t0}ms panel=${t2-t1}ms total=${t2-t0}ms`);
 
     const finalUrl = panelData.currentUrl || link;
     // Após navegação, a URL final pode ter mais dados (ex: place_id via ChIJ)
