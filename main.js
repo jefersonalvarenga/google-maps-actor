@@ -375,24 +375,23 @@ async function extractPlaceDataFromPanel(page) {
         const rating = ratingRaw ? parseFloat(ratingRaw.replace(',', '.')) : null;
 
         // ── Reviews ───────────────────────────────────────────────────────────
-        // O Google exibe o count como "(178)" num span separado, ao lado das estrelas.
-        // Estratégia 1: span cujo texto é exatamente "(N)" ou "N avaliações"
-        const reviewsEl = [...document.querySelectorAll('span')].find(el => {
-            const t = el.textContent.trim();
-            return /^\([\d.,]+\)$/.test(t) ||                        // "(178)"
-                   /^[\d.,]+\s*(?:avalia[çc][õo]es?|reviews?)$/i.test(t); // "178 avaliações"
-        });
-        // Estratégia 2: aria-label do elemento de rating que às vezes inclui o count
-        // ex: "4,3 estrelas 120 avaliações" ou "Rated 4.3 out of 5, 120 reviews"
-        const reviewsFromLabel = ratingEl?.getAttribute('aria-label')
-            ?.match(/(\d[\d.,]*)\s*(?:avalia[çc][õo]es?|reviews?)/i)?.[1];
-        // Estratégia 3: botão que abre as avaliações (aria-label="120 avaliações")
-        const reviewsBtn = document.querySelector('button[aria-label*="avalia"], button[aria-label*="review"]');
-        const reviewsFromBtn = reviewsBtn?.getAttribute('aria-label')?.match(/^([\d.,]+)/)?.[1];
+        // O Google usa span[aria-label="293 avaliações"] — mais confiável que buscar por texto.
+        // Estratégia 1: span com aria-label exato "N avaliações" ou "N reviews"
+        const reviewsSpan = [...document.querySelectorAll('span[aria-label]')].find(el =>
+            /^\d[\d.,]*\s*(?:avalia[çc][õo]es?|reviews?)$/i.test(el.getAttribute('aria-label') || '')
+        );
+        // Estratégia 2: span com texto "(N)" filho de div.F7nice ou span.F7nice
+        const f7ParentSpan = document.querySelector('.F7nice span');
+        const f7Text = f7ParentSpan?.textContent?.replace(/[()]/g, '').trim();
+        // Estratégia 3: botão "Mais avaliações (N)" — aria-label="Mais avaliações (290)"
+        const maisBtn = [...document.querySelectorAll('button[aria-label]')].find(el =>
+            /mais avalia/i.test(el.getAttribute('aria-label') || '')
+        );
+        const maisBtnCount = maisBtn?.getAttribute('aria-label')?.match(/\((\d[\d.,]*)\)/)?.[1];
 
-        const reviewsRaw = reviewsEl?.textContent?.replace(/[()]/g, '').trim()
-                        || reviewsFromLabel
-                        || reviewsFromBtn;
+        const reviewsRaw = reviewsSpan?.getAttribute('aria-label')?.match(/^(\d[\d.,]*)/)?.[1]
+                        || f7Text
+                        || maisBtnCount;
         const reviews_count = reviewsRaw ? parseInt(reviewsRaw.replace(/\./g, '').replace(',', ''), 10) : null;
 
         // ── Telefone ──────────────────────────────────────────────────────────
