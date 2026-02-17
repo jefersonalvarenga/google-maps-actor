@@ -361,14 +361,28 @@ async function extractPlaceDataFromPanel(page) {
         const name = getText('h1.DUwDvf') || getText('h1.fontHeadlineLarge') || getText('h1');
 
         // ── Rating ────────────────────────────────────────────────────────────
-        const ratingEl = document.querySelector('div[role="img"][aria-label*="estrela"], div[role="img"][aria-label*="star"]');
-        const ratingRaw = ratingEl?.getAttribute('aria-label')?.match(/[\d,.]+/)?.[0];
+        // O Google usa div[role="img"] com aria-label, mas às vezes é span.
+        // Cobrir plural (estrelas) e variações EN (stars).
+        const ratingEl = document.querySelector(
+            'div[role="img"][aria-label*="estrela"], div[role="img"][aria-label*="star"],' +
+            'span[role="img"][aria-label*="estrela"], span[role="img"][aria-label*="star"]'
+        );
+        // Fallback: span com classe F7nice que exibe a nota em texto direto
+        const ratingFallbackEl = !ratingEl ? document.querySelector('span.F7nice') : null;
+        let ratingRaw = ratingEl?.getAttribute('aria-label')?.match(/[\d,.]+/)?.[0]
+                     || ratingFallbackEl?.querySelector('span[aria-hidden="true"]')?.textContent?.trim()
+                     || ratingFallbackEl?.textContent?.trim()?.match(/^[\d,.]+/)?.[0];
         const rating = ratingRaw ? parseFloat(ratingRaw.replace(',', '.')) : null;
 
         // ── Reviews ───────────────────────────────────────────────────────────
-        const reviewsEl = [...document.querySelectorAll('button span')].find(el => /\d.*avalia|review/i.test(el.textContent));
-        const reviewsRaw = reviewsEl?.textContent?.match(/([\d.,]+)/)?.[1];
-        const reviews_count = reviewsRaw ? parseInt(reviewsRaw.replace(/[.,]/g, ''), 10) : null;
+        // Cobrir: button span (clicável), span.F7nice (estruturado), aria-label do rating
+        const reviewsEl = [...document.querySelectorAll('button span, span')].find(el =>
+            /^\(?([\d.,]+)\)?\s*(?:avalia[çc][õo]es?|reviews?)/i.test(el.textContent.trim())
+        );
+        // Fallback: pegar o número entre parênteses no aria-label do rating (ex: "4,3 estrelas, 120 avaliações")
+        const reviewsFromLabel = ratingEl?.getAttribute('aria-label')?.match(/(\d[\d.,]*)\s*(?:avalia|review)/i)?.[1];
+        const reviewsRaw = reviewsEl?.textContent?.match(/([\d.,]+)/)?.[1] || reviewsFromLabel;
+        const reviews_count = reviewsRaw ? parseInt(reviewsRaw.replace(/\./g, '').replace(',', ''), 10) : null;
 
         // ── Telefone ──────────────────────────────────────────────────────────
         const phoneEl = document.querySelector('button[data-item-id^="phone:tel:"], a[href^="tel:"]');
