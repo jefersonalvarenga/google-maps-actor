@@ -397,48 +397,39 @@ async function extractPlaceDataFromPanel(page) {
     });
 }
 
-// ─── Extrai dados de um lugar (uma página/tab por vez) ───────────────────────
+// ─── Extrai dados de um lugar reutilizando a mesma page ─────────────────────
 
-async function extractPlace(browser, link, language, label) {
-    const context = await browser.newContext({
-        locale: language,
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    });
-    const page = await context.newPage();
-    try {
-        await page.goto(link, { waitUntil: 'domcontentloaded', timeout: 60000 });
-        const panelData = await extractPlaceDataFromPanel(page);
-        const finalUrl = panelData.currentUrl || link;
+async function extractPlace(page, link, label) {
+    await page.goto(link, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    const panelData = await extractPlaceDataFromPanel(page);
+    const finalUrl = panelData.currentUrl || link;
 
-        const cidMatch    = finalUrl.match(/!1s(0x[0-9a-fA-F]+:0x[0-9a-fA-F]+)/);
-        const kgmidMatch  = finalUrl.match(/!16s%2Fg%2F([a-zA-Z0-9_-]+)/);
-        const coordMatch  = finalUrl.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/) ||
-                            finalUrl.match(/@(-?\d+\.\d+),(-?\d+\.\d+),/);
-        const placeId     = extractPlaceIdFromHtml(await page.content());
+    const cidMatch   = finalUrl.match(/!1s(0x[0-9a-fA-F]+:0x[0-9a-fA-F]+)/);
+    const kgmidMatch = finalUrl.match(/!16s%2Fg%2F([a-zA-Z0-9_-]+)/);
+    const coordMatch = finalUrl.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/) ||
+                       finalUrl.match(/@(-?\d+\.\d+),(-?\d+\.\d+),/);
+    const placeId    = extractPlaceIdFromHtml(await page.content());
 
-        const place = {
-            ...panelData,
-            google_maps_url: finalUrl,
-            place_id: placeId,
-            cid: cidMatch  ? cidMatch[1]            : null,
-            knowledge_graph_id: kgmidMatch ? `/g/${kgmidMatch[1]}` : null,
-            latitude:  coordMatch ? parseFloat(coordMatch[1]) : null,
-            longitude: coordMatch ? parseFloat(coordMatch[2]) : null,
-            categories: panelData.category_primary ? [panelData.category_primary] : [],
-            services: [],
-            rating_distribution: null,
-        };
-        delete place.currentUrl;
+    const place = {
+        ...panelData,
+        google_maps_url: finalUrl,
+        place_id: placeId,
+        cid: cidMatch   ? cidMatch[1]               : null,
+        knowledge_graph_id: kgmidMatch ? `/g/${kgmidMatch[1]}` : null,
+        latitude:  coordMatch ? parseFloat(coordMatch[1]) : null,
+        longitude: coordMatch ? parseFloat(coordMatch[2]) : null,
+        categories: panelData.category_primary ? [panelData.category_primary] : [],
+        services: [],
+        rating_distribution: null,
+    };
+    delete place.currentUrl;
 
-        if (panelData.full_address) {
-            Object.assign(place, parseAddress(panelData.full_address));
-        }
-
-        console.log(`   ✓ ${label} ${place.name} | ⭐ ${place.rating ?? '-'} (${place.reviews_count ?? 0} reviews) | ☎ ${place.phone || '-'} | 🌐 ${place.website || '-'}`);
-        return place;
-    } finally {
-        await context.close();
+    if (panelData.full_address) {
+        Object.assign(place, parseAddress(panelData.full_address));
     }
+
+    console.log(`   ✓ ${label} ${place.name} | ⭐ ${place.rating ?? '-'} (${place.reviews_count ?? 0} reviews) | ☎ ${place.phone || '-'} | 🌐 ${place.website || '-'}`);
+    return place;
 }
 
 // ─── Busca e extrai dados com Playwright (paralelo) ──────────────────────────
@@ -496,21 +487,24 @@ async function scrapeWithBrowser(searchTerm, location, language, maxPlaces, conc
             return result;
         }, maxPlaces);
 
-        await searchContext.close();
-        console.log(`   📋 ${links.length} links coletados — extraindo em paralelo (${concurrency} tabs)...`);
+        // Reutilizar a mesma página para todos os lugares (evita overhead de criar contexto novo)
+        const placePage = await searchContext.newPage();
+        console.log(`   📋 ${links.length} links coletados — extraindo sequencialmente...`);
 
-        // ETAPA 2: Abrir cada lugar sequencialmente (1 tab por vez — mais estável no container)
+        // ETAPA 2: Navegar em cada lugar reutilizando a mesma tab
         const total = links.length;
         for (let i = 0; i < total; i++) {
             const label = `[${i+1}/${total}]`;
             try {
-                const place = await extractPlace(browser, links[i], language, label);
+                const place = await extractPlace(placePage, links[i], label);
                 places.push(place);
                 if (onPlaceReady) await onPlaceReady(place);
             } catch (e) {
                 console.log(`   ⚠️  ${label} Erro: ${e.message.split('\n')[0]}`);
             }
         }
+
+        await searchContext.close();
 
     } finally {
         await browser.close();
