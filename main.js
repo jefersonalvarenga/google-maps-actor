@@ -336,16 +336,19 @@ async function extractPlaceDataFromPanel(page) {
         return !!(h1?.textContent?.trim());
     }, { timeout: 15000 }).catch(() => {});
 
-    // Aguarda pelo menos um campo de detalhe (phone, address, website, category)
-    await page.waitForFunction(() => {
-        return !!(
-            document.querySelector('button[data-item-id^="phone:tel:"]') ||
-            document.querySelector('a[href^="tel:"]') ||
-            document.querySelector('button[data-item-id="address"]') ||
-            document.querySelector('a[data-item-id="authority"]') ||
-            document.querySelector('button[jsaction*="category"]')
-        );
-    }, { timeout: 3000 }).catch(() => {});
+    // Aguarda evento load + pelo menos um campo de detalhe — o que vier primeiro
+    await Promise.race([
+        page.waitForLoadState('load', { timeout: 5000 }),
+        page.waitForFunction(() => {
+            return !!(
+                document.querySelector('button[data-item-id^="phone:tel:"]') ||
+                document.querySelector('a[href^="tel:"]') ||
+                document.querySelector('button[data-item-id="address"]') ||
+                document.querySelector('a[data-item-id="authority"]') ||
+                document.querySelector('button[jsaction*="category"]')
+            );
+        }, { timeout: 5000 }),
+    ]).catch(() => {});
 
     return page.evaluate(() => {
         const getText = sel => document.querySelector(sel)?.textContent?.trim() || null;
@@ -434,10 +437,10 @@ async function extractPlace(page, link, label) {
     await page.goto(link, { waitUntil: 'domcontentloaded', timeout: 60000 });
     let panelData = await extractPlaceDataFromPanel(page);
 
-    // Se o nome vier inválido, logar e tentar uma segunda vez com mais tempo
+    // Se o nome vier inválido, aguardar o evento load completo e tentar de novo
     if (!panelData.name || panelData.name === 'Google Maps') {
-        console.log(`   🔄 ${label} Nome inválido ("${panelData.name}") — retry com 5s extra...`);
-        await page.waitForTimeout(5000);
+        console.log(`   🔄 ${label} Nome inválido ("${panelData.name}") — aguardando load event...`);
+        await page.waitForLoadState('load', { timeout: 10000 }).catch(() => {});
         panelData = await extractPlaceDataFromPanel(page);
     }
 
