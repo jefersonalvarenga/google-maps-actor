@@ -183,7 +183,10 @@ function parsePlaceFromHtml(html, url) {
         data.knowledge_graph_id = kgmidMatch ? `/g/${kgmidMatch[1]}` : null;
 
         // ── Coordenadas ───────────────────────────────────────────────────────
-        const coordMatch = url.match(/@(-?\d+\.\d+),(-?\d+\.\d+),/);
+        // Formato 1: @lat,lng,  (URL de busca)
+        // Formato 2: !3d<lat>!4d<lng>  (URL de lugar individual, ex: data=...!3d-16.01!4d-48.05)
+        const coordMatch = url.match(/@(-?\d+\.\d+),(-?\d+\.\d+),/) ||
+                           url.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/);
         data.latitude = coordMatch ? parseFloat(coordMatch[1]) : null;
         data.longitude = coordMatch ? parseFloat(coordMatch[2]) : null;
 
@@ -276,6 +279,19 @@ function parsePlaceFromHtml(html, url) {
         // ── Price Level ───────────────────────────────────────────────────────
         const priceMatch = html.match(/priceRange["']?\s*:\s*["'](\$+)["']/i);
         data.price_level = priceMatch ? priceMatch[1] : null;
+
+        // ── Services ──────────────────────────────────────────────────────────
+        // O Google Maps lista serviços/comodidades no HTML (ex: "Aceita cartão")
+        // Extrair itens de listas de serviços quando disponível
+        const serviceMatches = html.match(/"serviceType"\s*:\s*"([^"]+)"/g) ||
+                               html.match(/aria-label="([^"]+)"\s+[^>]*checked/g);
+        data.services = serviceMatches
+            ? [...new Set(serviceMatches.map(m => m.match(/"([^"]+)"(?:\s*$|\s+[^>]*checked)/)?.[1]).filter(Boolean))]
+            : [];
+
+        // ── Rating Distribution ───────────────────────────────────────────────
+        // Distribuição de estrelas (5, 4, 3, 2, 1) — raramente disponível no HTML estático
+        data.rating_distribution = null;
 
         // ── Parsear endereço ──────────────────────────────────────────────────
         if (data.full_address) {
