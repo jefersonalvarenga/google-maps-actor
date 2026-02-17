@@ -48,6 +48,14 @@
                 "Deutsch"
             ]
         },
+        "concurrency": {
+            "title": "Concorrência",
+            "type": "integer",
+            "description": "Número de lugares extraídos em paralelo. Valores maiores = mais rápido, mas maior chance de bloqueio",
+            "default": 10,
+            "minimum": 1,
+            "maximum": 20
+        },
         "onlyWithWebsite": {
             "title": "Apenas com website",
             "type": "boolean",
