@@ -508,10 +508,10 @@ async function extractPlace(page, link, label) {
 
 // Thresholds mínimos por campo (% de preenchimento esperado)
 const QUALITY_THRESHOLDS = {
-    phone:         0.90,  // 90% dos lugares devem ter telefone
-    rating:        0.90,  // 90% devem ter rating
-    reviews_count: 0.85,  // 85% devem ter reviews_count
-    full_address:  0.95,  // 95% devem ter endereço
+    phone:         0.95,  // 95% → crítico (contato SDR)
+    rating:        0.95,  // 95% → crítico (rating_sem_count)
+    reviews_count: 0.85,  // 85% → alerta
+    full_address:  0.95,  // 95% → alerta
 };
 
 // Campos críticos para o SDR: sem contato (phone/whatsapp) ou rating sem count → retry
@@ -745,7 +745,7 @@ try {
                 const semContatoPct   = Math.round(semContatoCount / qualityWindow.length * 100);
                 const contatoPct      = 100 - semContatoPct;
 
-                const hasContactProblem = contatoPct < 90; // menos de 90% com contato
+                const hasContactProblem = contatoPct < 95; // menos de 95% com contato → aborta
                 const hasOtherFailures  = failing.length > 0;
 
                 if (hasContactProblem || hasOtherFailures) {
@@ -791,9 +791,10 @@ try {
 
         console.log(`   ✅ ${saved} lugares salvos para "${searchTerm}"`);
         if (retryQueue.length > 0) {
-            console.log(`   📋 ${retryQueue.length} com campos ausentes (retry_queue):`);
+            console.log(`   📋 ${retryQueue.length} com problemas (retry_queue):`);
             for (const r of retryQueue.slice(0, 5)) {
-                console.log(`      • ${r.name} — faltando: ${r._missing_fields.join(', ')}`);
+                const issues = [...(r._critical_issues || []), ...(r._warning_issues || [])].join(', ');
+                console.log(`      • ${r.name} — ${issues}`);
             }
             if (retryQueue.length > 5) console.log(`      ... e mais ${retryQueue.length - 5}`);
         }
