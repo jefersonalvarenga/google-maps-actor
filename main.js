@@ -332,8 +332,11 @@ async function runWithConcurrency(tasks, concurrency) {
 async function extractPlaceDataFromPanel(page) {
     // Aguarda o painel principal carregar (h1 = nome do lugar visível)
     await page.waitForSelector('h1.DUwDvf, h1.fontHeadlineLarge, h1', { timeout: 30000 });
-    // Pequena pausa para os elementos XHR (phone, website) aparecerem no DOM
-    await page.waitForTimeout(1500);
+    // Aguarda phone/address OU 3s — o que vier primeiro
+    await Promise.race([
+        page.waitForSelector('button[data-item-id^="phone:tel:"], a[href^="tel:"], button[data-item-id="address"]', { timeout: 3000 }),
+        page.waitForTimeout(3000),
+    ]).catch(() => {});
 
     return page.evaluate(() => {
         const getText = sel => document.querySelector(sel)?.textContent?.trim() || null;
@@ -397,8 +400,12 @@ async function extractPlaceDataFromPanel(page) {
 // ─── Extrai dados de um lugar reutilizando a mesma page ─────────────────────
 
 async function extractPlace(page, link, label) {
+    const t0 = Date.now();
     await page.goto(link, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    const t1 = Date.now();
     const panelData = await extractPlaceDataFromPanel(page);
+    const t2 = Date.now();
+    console.log(`   ⏱  ${label} goto=${t1-t0}ms panel=${t2-t1}ms total=${t2-t0}ms`);
     const finalUrl = panelData.currentUrl || link;
 
     const cidMatch   = finalUrl.match(/!1s(0x[0-9a-fA-F]+:0x[0-9a-fA-F]+)/);
