@@ -405,36 +405,59 @@ async function extractPlaceDataFromPanel(page) {
     });
 }
 
+// ─── Extrai campos da URL (sem carregar a página) ────────────────────────────
+
+function extractFromUrl(url) {
+    const cidMatch   = url.match(/!1s(0x[0-9a-fA-F]+:0x[0-9a-fA-F]+)/);
+    const kgmidMatch = url.match(/!16s%2Fg%2F([a-zA-Z0-9_-]+)/);
+    const coordMatch = url.match(/@(-?\d+\.\d+),(-?\d+\.\d+),/) ||
+                       url.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/);
+    const nameMatch  = url.match(/maps\/place\/([^/@?]+)/);
+
+    return {
+        cid:               cidMatch   ? cidMatch[1]            : null,
+        knowledge_graph_id: kgmidMatch ? `/g/${kgmidMatch[1]}` : null,
+        latitude:          coordMatch ? parseFloat(coordMatch[1]) : null,
+        longitude:         coordMatch ? parseFloat(coordMatch[2]) : null,
+        name_from_url:     nameMatch  ? decodeURIComponent(nameMatch[1]).replace(/\+/g, ' ') : null,
+    };
+}
+
 // ─── Extrai dados de um lugar reutilizando a mesma page ─────────────────────
 
 async function extractPlace(page, link, label) {
+    // Extrair o que der da URL antes de carregar a página
+    const fromUrl = extractFromUrl(link);
+
     const t0 = Date.now();
     await page.goto(link, { waitUntil: 'domcontentloaded', timeout: 60000 });
     const t1 = Date.now();
     const panelData = await extractPlaceDataFromPanel(page);
     const t2 = Date.now();
     console.log(`   ⏱  ${label} goto=${t1-t0}ms panel=${t2-t1}ms total=${t2-t0}ms`);
-    const finalUrl = panelData.currentUrl || link;
 
-    const cidMatch   = finalUrl.match(/!1s(0x[0-9a-fA-F]+:0x[0-9a-fA-F]+)/);
-    const kgmidMatch = finalUrl.match(/!16s%2Fg%2F([a-zA-Z0-9_-]+)/);
-    const coordMatch = finalUrl.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/) ||
-                       finalUrl.match(/@(-?\d+\.\d+),(-?\d+\.\d+),/);
-    const placeId    = extractPlaceIdFromHtml(await page.content());
+    const finalUrl = panelData.currentUrl || link;
+    // Após navegação, a URL final pode ter mais dados (ex: place_id via ChIJ)
+    const fromFinalUrl = extractFromUrl(finalUrl);
+    const placeId = extractPlaceIdFromHtml(await page.content());
 
     const place = {
         ...panelData,
+        // Usar nome do DOM se disponível, senão usar nome da URL
+        name: panelData.name || fromUrl.name_from_url,
         google_maps_url: finalUrl,
         place_id: placeId,
-        cid: cidMatch   ? cidMatch[1]               : null,
-        knowledge_graph_id: kgmidMatch ? `/g/${kgmidMatch[1]}` : null,
-        latitude:  coordMatch ? parseFloat(coordMatch[1]) : null,
-        longitude: coordMatch ? parseFloat(coordMatch[2]) : null,
+        // Preferir dados da URL final, fallback para URL original
+        cid:               fromFinalUrl.cid               ?? fromUrl.cid,
+        knowledge_graph_id: fromFinalUrl.knowledge_graph_id ?? fromUrl.knowledge_graph_id,
+        latitude:          fromFinalUrl.latitude           ?? fromUrl.latitude,
+        longitude:         fromFinalUrl.longitude          ?? fromUrl.longitude,
         categories: panelData.category_primary ? [panelData.category_primary] : [],
         services: [],
         rating_distribution: null,
     };
     delete place.currentUrl;
+    delete place.name_from_url;
 
     if (panelData.full_address) {
         Object.assign(place, parseAddress(panelData.full_address));
