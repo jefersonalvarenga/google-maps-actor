@@ -330,13 +330,21 @@ async function runWithConcurrency(tasks, concurrency) {
 // ─── Extrai dados do painel lateral após clicar em um lugar ──────────────────
 
 async function extractPlaceDataFromPanel(page) {
-    // Aguarda o painel principal carregar (h1 = nome do lugar visível)
-    await page.waitForSelector('h1.DUwDvf, h1.fontHeadlineLarge, h1', { timeout: 30000 });
-    // Aguarda phone/address OU 3s — o que vier primeiro
-    await Promise.race([
-        page.waitForSelector('button[data-item-id^="phone:tel:"], a[href^="tel:"], button[data-item-id="address"]', { timeout: 3000 }),
-        page.waitForTimeout(3000),
-    ]).catch(() => {});
+    // Aguarda h1 + pelo menos um dado de detalhe (phone, address, website, category)
+    // ou no máximo 8s — o que vier primeiro
+    await page.waitForFunction(() => {
+        const h1 = document.querySelector('h1');
+        if (!h1?.textContent?.trim()) return false;
+        return !!(
+            document.querySelector('button[data-item-id^="phone:tel:"]') ||
+            document.querySelector('a[href^="tel:"]') ||
+            document.querySelector('button[data-item-id="address"]') ||
+            document.querySelector('a[data-item-id="authority"]') ||
+            document.querySelector('button[jsaction*="category"]')
+        );
+    }, { timeout: 8000 }).catch(() => {
+        // Fallback silencioso — extrai o que tiver no DOM
+    });
 
     return page.evaluate(() => {
         const getText = sel => document.querySelector(sel)?.textContent?.trim() || null;
