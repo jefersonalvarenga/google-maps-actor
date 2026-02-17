@@ -396,9 +396,23 @@ async function extractPlaceDataFromPanel(page) {
 
         // ── Telefone ──────────────────────────────────────────────────────────
         const phoneEl = document.querySelector('button[data-item-id^="phone:tel:"], a[href^="tel:"]');
-        const phone = phoneEl?.getAttribute('data-item-id')?.replace('phone:tel:', '') ||
-                      phoneEl?.getAttribute('href')?.replace('tel:', '') ||
-                      null;
+        const phoneRaw = phoneEl?.getAttribute('data-item-id')?.replace('phone:tel:', '')
+                      || phoneEl?.getAttribute('href')?.replace('tel:', '')
+                      || null;
+        // Normalizar para E.164: remover caracteres não numéricos, tratar prefixo BR
+        let phone = null;
+        if (phoneRaw) {
+            const digits = phoneRaw.replace(/\D/g, '');
+            if (digits.startsWith('55') && digits.length >= 12) {
+                phone = '+' + digits;                    // já tem DDI 55
+            } else if (digits.startsWith('0') && digits.length >= 10) {
+                phone = '+55' + digits.slice(1);         // 0XX → +55XX (formato discagem nacional BR)
+            } else if (digits.length >= 10) {
+                phone = '+55' + digits;                  // sem prefixo → assume BR
+            } else {
+                phone = phoneRaw;                        // formato desconhecido, manter original
+            }
+        }
 
         // ── Website ───────────────────────────────────────────────────────────
         const websiteEl = document.querySelector('a[data-item-id="authority"], a[href*="//"][aria-label*="site"], a[href*="//"][aria-label*="website"]');
