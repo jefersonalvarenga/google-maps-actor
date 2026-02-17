@@ -73,38 +73,56 @@ function extractAppState(html) {
     }
 }
 
-// Extrai place IDs do HTML da página de busca (/search?tbm=map)
-// O Google retorna query_place_id=ChIJ... nos links dos resultados
-function extractPlaceIdsFromSearchHtml(html) {
-    const placeIds = new Set();
-
-    // Formato: query_place_id=ChIJ...
-    const regex = /query_place_id=(ChIJ[\w-]+)/g;
-    let match;
-    while ((match = regex.exec(html)) !== null) {
-        placeIds.add(match[1]);
-    }
-
-    // Formato alternativo: !1sChIJ... nos dados embutidos
-    const altRegex = /!1s(ChIJ[\w-]{10,})/g;
-    while ((match = altRegex.exec(html)) !== null) {
-        placeIds.add(match[1]);
-    }
-
-    return [...placeIds];
-}
-
 // Monta a URL canônica do Google Maps para um place_id
 function buildPlaceUrl(placeId) {
     return `https://www.google.com/maps/search/?api=1&query_place_id=${placeId}`;
 }
 
-// Extrai links de lugares da página de busca
+// Parseia a resposta JSON do Google Maps (/search?tbm=map)
+// O Google retorna )]}' seguido de JSON com os dados dos lugares
+function extractPlaceIdsFromSearchResponse(body, maxPlaces) {
+    const placeIds = new Set();
+
+    try {
+        // Remover o prefixo de proteção XSSI: )]}'
+        const jsonStr = body.replace(/^\s*\)\]\}'\s*/, '');
+        const data = JSON.parse(jsonStr);
+
+        // Os place IDs (ChIJ...) estão espalhados pelo JSON aninhado
+        // Buscar recursivamente qualquer string que comece com ChIJ
+        function findPlaceIds(obj, depth = 0) {
+            if (depth > 15 || placeIds.size >= maxPlaces * 3) return;
+            if (typeof obj === 'string') {
+                if (/^ChIJ[\w-]{10,}$/.test(obj)) {
+                    placeIds.add(obj);
+                }
+            } else if (Array.isArray(obj)) {
+                for (const item of obj) findPlaceIds(item, depth + 1);
+            } else if (obj && typeof obj === 'object') {
+                for (const val of Object.values(obj)) findPlaceIds(val, depth + 1);
+            }
+        }
+
+        findPlaceIds(data);
+
+    } catch (e) {
+        // Fallback: regex no texto cru
+        const regex = /["']?(ChIJ[\w-]{10,})["']?/g;
+        let match;
+        while ((match = regex.exec(body)) !== null && placeIds.size < maxPlaces * 3) {
+            placeIds.add(match[1]);
+        }
+    }
+
+    return [...placeIds].slice(0, maxPlaces);
+}
+
+// Extrai links de lugares da resposta de busca
 function extractPlaceLinksFromHtml(html, maxPlaces) {
     const links = new Set();
     let match;
 
-    // Método 1: /maps/place/ absolutos
+    // Método 1: /maps/place/ absolutos (HTML clássico)
     const hrefRegex = /href="(https:\/\/www\.google\.com\/maps\/place\/[^"]+)"/g;
     while ((match = hrefRegex.exec(html)) !== null && links.size < maxPlaces * 3) {
         links.add(match[1].replace(/&amp;/g, '&'));
@@ -116,10 +134,11 @@ function extractPlaceLinksFromHtml(html, maxPlaces) {
         links.add('https://www.google.com' + match[1].replace(/&amp;/g, '&'));
     }
 
-    // Método 3: place IDs extraídos → montar URL via /search?api=1&query_place_id=
+    // Método 3: parsear JSON do Google (resposta )]}'...)
     if (links.size === 0) {
-        const placeIds = extractPlaceIdsFromSearchHtml(html);
-        for (const pid of placeIds.slice(0, maxPlaces * 3)) {
+        const placeIds = extractPlaceIdsFromSearchResponse(html, maxPlaces);
+        console.log(`   Place IDs encontrados no JSON: ${placeIds.length}`);
+        for (const pid of placeIds) {
             links.add(buildPlaceUrl(pid));
         }
     }
