@@ -73,21 +73,55 @@ function extractAppState(html) {
     }
 }
 
-// Extrai links de lugares da página de busca via APP_INITIALIZATION_STATE ou fallback regex
+// Extrai place IDs do HTML da página de busca (/search?tbm=map)
+// O Google retorna query_place_id=ChIJ... nos links dos resultados
+function extractPlaceIdsFromSearchHtml(html) {
+    const placeIds = new Set();
+
+    // Formato: query_place_id=ChIJ...
+    const regex = /query_place_id=(ChIJ[\w-]+)/g;
+    let match;
+    while ((match = regex.exec(html)) !== null) {
+        placeIds.add(match[1]);
+    }
+
+    // Formato alternativo: !1sChIJ... nos dados embutidos
+    const altRegex = /!1s(ChIJ[\w-]{10,})/g;
+    while ((match = altRegex.exec(html)) !== null) {
+        placeIds.add(match[1]);
+    }
+
+    return [...placeIds];
+}
+
+// Monta a URL canônica do Google Maps para um place_id
+function buildPlaceUrl(placeId) {
+    return `https://www.google.com/maps/search/?api=1&query_place_id=${placeId}`;
+}
+
+// Extrai links de lugares da página de busca
 function extractPlaceLinksFromHtml(html, maxPlaces) {
     const links = new Set();
-
-    // Método 1: regex direto nos hrefs do HTML
-    const hrefRegex = /href="(https:\/\/www\.google\.com\/maps\/place\/[^"]+)"/g;
     let match;
+
+    // Método 1: /maps/place/ absolutos
+    const hrefRegex = /href="(https:\/\/www\.google\.com\/maps\/place\/[^"]+)"/g;
     while ((match = hrefRegex.exec(html)) !== null && links.size < maxPlaces * 3) {
         links.add(match[1].replace(/&amp;/g, '&'));
     }
 
-    // Método 2: URLs relativas /maps/place/
+    // Método 2: /maps/place/ relativos
     const relRegex = /href="(\/maps\/place\/[^"]+)"/g;
     while ((match = relRegex.exec(html)) !== null && links.size < maxPlaces * 3) {
         links.add('https://www.google.com' + match[1].replace(/&amp;/g, '&'));
+    }
+
+    // Método 3: place IDs extraídos → montar URL via /search?api=1&query_place_id=
+    if (links.size === 0) {
+        const placeIds = extractPlaceIdsFromSearchHtml(html);
+        for (const pid of placeIds.slice(0, maxPlaces * 3)) {
+            links.add(buildPlaceUrl(pid));
+        }
     }
 
     return [...links].slice(0, maxPlaces);
@@ -278,7 +312,8 @@ try {
         console.log(`\n=== Buscando: "${searchTerm}" em ${location} ===`);
 
         const searchQuery = encodeURIComponent(`${searchTerm} ${location}`);
-        const searchUrl = `https://www.google.com/maps/search/${searchQuery}?hl=${language}`;
+        // Usar /search?tbm=map que retorna HTML mesmo sem JS
+        const searchUrl = `https://www.google.com/search?tbm=map&hl=${language}&q=${searchQuery}`;
 
         let placeLinks = [];
         try {
