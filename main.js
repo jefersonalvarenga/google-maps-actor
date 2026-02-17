@@ -1,4 +1,5 @@
 import { Actor } from 'apify';
+import { chromium } from 'playwright';
 
 await Actor.init();
 
@@ -299,6 +300,61 @@ async function runWithConcurrency(tasks, concurrency) {
     return results;
 }
 
+// ─── Busca com Playwright (lista de lugares) ─────────────────────────────────
+
+async function getPlaceLinksWithBrowser(searchTerm, location, language, maxPlaces) {
+    const browser = await chromium.launch({
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+    });
+
+    try {
+        const context = await browser.newContext({
+            locale: language,
+            userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        });
+        const page = await context.newPage();
+
+        const searchQuery = encodeURIComponent(`${searchTerm} ${location}`);
+        const searchUrl = `https://www.google.com/maps/search/${searchQuery}?hl=${language}`;
+
+        await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await page.waitForSelector('div[role="feed"] a[href*="/maps/place/"]', { timeout: 15000 });
+
+        // Scroll para carregar mais resultados
+        const feed = 'div[role="feed"]';
+        let prev = 0;
+        for (let i = 0; i < 10; i++) {
+            const count = await page.evaluate(sel => document.querySelectorAll(`${sel} a[href*="/maps/place/"]`).length, feed);
+            if (count >= maxPlaces) break;
+            await page.evaluate(sel => { const f = document.querySelector(sel); if (f) f.scrollTo(0, f.scrollHeight); }, feed);
+            await page.waitForTimeout(1500);
+            const newH = await page.evaluate(sel => { const f = document.querySelector(sel); return f ? f.scrollHeight : 0; }, feed);
+            if (newH === prev) break;
+            prev = newH;
+        }
+
+        // Coletar links únicos
+        const links = await page.evaluate((max) => {
+            const seen = new Set();
+            const results = [];
+            for (const el of document.querySelectorAll('a[href*="/maps/place/"]')) {
+                if (el.href && !seen.has(el.href)) {
+                    seen.add(el.href);
+                    results.push(el.href);
+                    if (results.length >= max) break;
+                }
+            }
+            return results;
+        }, maxPlaces);
+
+        return links;
+
+    } finally {
+        await browser.close();
+    }
+}
+
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 try {
@@ -317,7 +373,7 @@ try {
         userData = {}
     } = input;
 
-    console.log(`\n🚀 Iniciando scraping (modo HTTP — sem browser)`);
+    console.log(`\n🚀 Iniciando scraping (modo híbrido: browser p/ busca + fetch paralelo p/ detalhes)`);
     console.log(`   📍 Localização: ${location}`);
     console.log(`   🔍 Termos de busca: ${searchTerms.length} termo(s)`);
     console.log(`   📊 Máximo por busca: ${maxCrawledPlacesPerSearch} lugares`);
@@ -330,19 +386,12 @@ try {
     for (const searchTerm of searchTerms) {
         console.log(`\n=== Buscando: "${searchTerm}" em ${location} ===`);
 
-        const searchQuery = encodeURIComponent(`${searchTerm} ${location}`);
-        // Usar /search?tbm=map que retorna HTML mesmo sem JS
-        const searchUrl = `https://www.google.com/search?tbm=map&hl=${language}&q=${searchQuery}`;
-
+        // ETAPA 1: Usar browser para obter a lista de links (requer JS)
         let placeLinks = [];
         try {
-            console.log(`📡 Buscando lista de lugares...`);
-            const searchHtml = await fetchPage(searchUrl, language);
-            // DEBUG: logar resposta completa
-            console.log(`DEBUG: tamanho da resposta: ${searchHtml.length} chars`);
-            console.log(`DEBUG: resposta completa:\n${searchHtml}`);
-            placeLinks = extractPlaceLinksFromHtml(searchHtml, maxCrawledPlacesPerSearch);
-            console.log(`   Encontrados ${placeLinks.length} links de lugares`);
+            console.log(`🌐 Abrindo browser para coletar lista de lugares...`);
+            placeLinks = await getPlaceLinksWithBrowser(searchTerm, location, language, maxCrawledPlacesPerSearch);
+            console.log(`   ✅ ${placeLinks.length} links coletados`);
         } catch (e) {
             console.log(`❌ Erro ao buscar lista: ${e.message}`);
             continue;
@@ -353,27 +402,28 @@ try {
             continue;
         }
 
-        // Criar tasks para executar em paralelo
+        // ETAPA 2: Fetch paralelo para detalhes de cada lugar (sem browser)
+        console.log(`⚡ Extraindo detalhes de ${placeLinks.length} lugares em paralelo (concorrência: ${concurrency})...`);
+
         const tasks = placeLinks.map((link, i) => async () => {
             try {
-                console.log(`[${i + 1}/${placeLinks.length}] Extraindo: ${link.substring(0, 80)}...`);
                 const html = await fetchPage(link, language);
                 const placeData = parsePlaceFromHtml(html, link);
 
                 if (!placeData.name) {
-                    console.log(`⚠️  Lugar sem nome, ignorando`);
+                    console.log(`⚠️  [${i+1}] Lugar sem nome, ignorando`);
                     return null;
                 }
 
                 const dedupeKey = placeData.place_id || placeData.cid || link;
                 if (seenPlaceIds.has(dedupeKey)) {
-                    console.log(`⏭️  ${placeData.name} ignorado (duplicado)`);
+                    console.log(`⏭️  [${i+1}] ${placeData.name} ignorado (duplicado)`);
                     return null;
                 }
                 seenPlaceIds.add(dedupeKey);
 
                 if (onlyWithWebsite && !placeData.website) {
-                    console.log(`⏭️  ${placeData.name} ignorado (sem website)`);
+                    console.log(`⏭️  [${i+1}] ${placeData.name} ignorado (sem website)`);
                     return null;
                 }
 
@@ -386,16 +436,15 @@ try {
                 };
 
                 await Actor.pushData(result);
-                console.log(`✓ ${placeData.name} (${placeData.rating || 'N/A'} ⭐ | ${placeData.reviews_count || 0} reviews)`);
+                console.log(`✓ [${i+1}] ${placeData.name} (${placeData.rating || 'N/A'} ⭐ | ${placeData.reviews_count || 0} reviews)`);
                 return result;
 
             } catch (e) {
-                console.log(`❌ Erro ao extrair lugar: ${e.message}`);
+                console.log(`❌ [${i+1}] Erro: ${e.message}`);
                 return null;
             }
         });
 
-        // Executar em paralelo com limite de concorrência
         const results = await runWithConcurrency(tasks, concurrency);
         const valid = results.filter(Boolean);
         allResults.push(...valid);
