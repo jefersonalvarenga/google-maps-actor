@@ -241,6 +241,17 @@ function parsePlaceFromHtml(html, url) {
                            html.match(/tel:([+\d\s()-]+)"/);
         data.phone = phoneMatch ? phoneMatch[1].trim() : null;
 
+        // ── WhatsApp ──────────────────────────────────────────────────────────
+        // Google Maps exibe links wa.me/ quando o lugar cadastra WhatsApp
+        const waMatch = html.match(/https?:\/\/(?:api\.whatsapp\.com\/send[^"'\\]*phone=|wa\.me\/)(\d+)/i);
+        if (waMatch) {
+            data.whatsapp = '+' + waMatch[1];
+        } else {
+            // Fallback: buscar no JSON embebido (wa.me escappado como \u...)
+            const waEscaped = html.match(/wa\\.me\\\/(\d+)/);
+            data.whatsapp = waEscaped ? '+' + waEscaped[1] : null;
+        }
+
         // ── Website ───────────────────────────────────────────────────────────
         const websiteMatch = html.match(/"url"\s*:\s*"(https?:\/\/(?!(?:www\.google|maps\.google|goo\.gl))[^"]+)"/);
         data.website = websiteMatch ? websiteMatch[1] : null;
