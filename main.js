@@ -91,11 +91,11 @@ function extractPlaceIdsFromSearchResponse(body, maxPlaces) {
         // Os place IDs (ChIJ...) estão espalhados pelo JSON aninhado
         // Buscar recursivamente qualquer string que comece com ChIJ
         function findPlaceIds(obj, depth = 0) {
-            if (depth > 15 || placeIds.size >= maxPlaces * 3) return;
+            if (depth > 30 || placeIds.size >= maxPlaces * 3) return;
             if (typeof obj === 'string') {
-                if (/^ChIJ[\w-]{10,}$/.test(obj)) {
-                    placeIds.add(obj);
-                }
+                // Aceitar tanto string exata quanto substring com ChIJ
+                const matches = obj.match(/ChIJ[\w-]{10,}/g);
+                if (matches) matches.forEach(m => placeIds.add(m));
             } else if (Array.isArray(obj)) {
                 for (const item of obj) findPlaceIds(item, depth + 1);
             } else if (obj && typeof obj === 'object') {
@@ -338,8 +338,11 @@ try {
         try {
             console.log(`📡 Buscando lista de lugares...`);
             const searchHtml = await fetchPage(searchUrl, language);
-            // DEBUG: logar primeiros 2000 chars do HTML para diagnóstico
-            console.log(`DEBUG HTML (primeiros 2000 chars):\n${searchHtml.substring(0, 2000)}`);
+            // DEBUG: logar tamanho total e buscar ChIJ diretamente
+            console.log(`DEBUG: tamanho da resposta: ${searchHtml.length} chars`);
+            const allChiJs = searchHtml.match(/ChIJ[\w-]{10,}/g) || [];
+            console.log(`DEBUG: ChIJ encontrados via regex direto: ${allChiJs.length}`);
+            if (allChiJs.length > 0) console.log(`DEBUG: primeiros 5: ${allChiJs.slice(0, 5).join(', ')}`);
             placeLinks = extractPlaceLinksFromHtml(searchHtml, maxCrawledPlacesPerSearch);
             console.log(`   Encontrados ${placeLinks.length} links de lugares`);
         } catch (e) {
