@@ -502,6 +502,31 @@ async function extractPlace(page, link, label) {
     return place;
 }
 
+// ─── Verificação de qualidade em tempo real ──────────────────────────────────
+
+// Thresholds mínimos por campo (% de preenchimento esperado)
+const QUALITY_THRESHOLDS = {
+    phone:         0.90,  // 90% dos lugares devem ter telefone
+    rating:        0.90,  // 90% devem ter rating
+    reviews_count: 0.85,  // 85% devem ter reviews_count
+    full_address:  0.95,  // 95% devem ter endereço
+};
+
+// Verifica qualidade de uma janela de registros recentes.
+// Retorna lista de campos que estão abaixo do threshold.
+function checkQuality(window) {
+    if (window.length === 0) return [];
+    const failing = [];
+    for (const [field, threshold] of Object.entries(QUALITY_THRESHOLDS)) {
+        const filled = window.filter(r => r[field] != null && r[field] !== '').length;
+        const pct = filled / window.length;
+        if (pct < threshold) {
+            failing.push({ field, pct: Math.round(pct * 100), threshold: Math.round(threshold * 100) });
+        }
+    }
+    return failing;
+}
+
 // ─── Busca e extrai dados com Playwright (paralelo) ──────────────────────────
 
 async function scrapeWithBrowser(searchTerm, location, language, maxPlaces, concurrency, onPlaceReady) {
@@ -579,12 +604,20 @@ async function scrapeWithBrowser(searchTerm, location, language, maxPlaces, conc
 
         // ETAPA 2: Navegar em cada lugar reutilizando a mesma tab
         const total = links.length;
+        let aborted = false;
         for (let i = 0; i < total; i++) {
+            if (aborted) break;
             const label = `[${i+1}/${total}]`;
             try {
                 const place = await extractPlace(placePage, links[i], label);
                 places.push(place);
-                if (onPlaceReady) await onPlaceReady(place);
+                if (onPlaceReady) {
+                    const shouldAbort = await onPlaceReady(place);
+                    if (shouldAbort === 'ABORT') {
+                        aborted = true;
+                        console.log(`\n🛑 Extração interrompida pelo monitor de qualidade após ${i+1} lugares.`);
+                    }
+                }
             } catch (e) {
                 console.log(`   ⚠️  ${label} Erro: ${e.message.split('\n')[0]}`);
             }
@@ -638,6 +671,10 @@ try {
         console.log(`\n=== Buscando: "${searchTerm}" em ${location} ===`);
 
         let saved = 0;
+        const qualityWindow = [];       // janela deslizante dos últimos registros salvos
+        const retryQueue = [];          // lugares com problemas para retentativa
+        const QUALITY_CHECK_EVERY = 10; // verificar a cada N lugares salvos
+        const QUALITY_WINDOW_SIZE = 20; // avaliar os últimos N registros
 
         const onPlaceReady = async (placeData) => {
             if (!placeData.name || placeData.name === 'Google Maps') {
@@ -667,7 +704,48 @@ try {
 
             await Actor.pushData(result);
             allResults.push(result);
+            qualityWindow.push(result);
+            if (qualityWindow.length > QUALITY_WINDOW_SIZE) qualityWindow.shift();
             saved++;
+
+            // Detectar campos ausentes neste registro e enfileirar para retry
+            const missingFields = Object.keys(QUALITY_THRESHOLDS).filter(f =>
+                result[f] == null || result[f] === ''
+            );
+            if (missingFields.length > 0) {
+                retryQueue.push({ ...result, _missing_fields: missingFields });
+            }
+
+            // Verificação periódica de qualidade
+            if (saved % QUALITY_CHECK_EVERY === 0 && qualityWindow.length >= QUALITY_CHECK_EVERY) {
+                const failing = checkQuality(qualityWindow);
+                if (failing.length > 0) {
+                    console.log(`\n⚠️  MONITOR DE QUALIDADE — janela dos últimos ${qualityWindow.length} registros:`);
+                    for (const { field, pct, threshold } of failing) {
+                        console.log(`   ❌ ${field}: ${pct}% preenchido (mínimo: ${threshold}%)`);
+                    }
+
+                    // Campos críticos que justificam abortar (não apenas avisar)
+                    const criticalFields = ['rating', 'full_address'];
+                    const isCritical = failing.some(f => criticalFields.includes(f.field));
+                    if (isCritical) {
+                        console.log(`   🛑 Campo crítico abaixo do threshold — interrompendo extração.`);
+                        // Salvar fila de retry no dataset especial
+                        if (retryQueue.length > 0) {
+                            await Actor.pushData(
+                                retryQueue.map(r => ({ ...r, _dataset: 'retry_queue' })),
+                                { datasetName: 'retry_queue' }
+                            ).catch(() => {}); // silencioso se dataset nomeado não suportado localmente
+                            console.log(`   📋 ${retryQueue.length} lugares salvos em retry_queue para reprocessamento.`);
+                        }
+                        return 'ABORT';
+                    } else {
+                        console.log(`   ⚠️  Qualidade abaixo do esperado mas sem campos críticos — continuando.`);
+                    }
+                } else {
+                    console.log(`\n✅ MONITOR DE QUALIDADE [${saved} salvos] — OK (janela de ${qualityWindow.length})`);
+                }
+            }
         };
 
         try {
@@ -679,6 +757,13 @@ try {
         }
 
         console.log(`   ✅ ${saved} lugares salvos para "${searchTerm}"`);
+        if (retryQueue.length > 0) {
+            console.log(`   📋 ${retryQueue.length} com campos ausentes (retry_queue):`);
+            for (const r of retryQueue.slice(0, 5)) {
+                console.log(`      • ${r.name} — faltando: ${r._missing_fields.join(', ')}`);
+            }
+            if (retryQueue.length > 5) console.log(`      ... e mais ${retryQueue.length - 5}`);
+        }
     }
 
     console.log(`\n=== Scraping concluído ===`);
