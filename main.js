@@ -15,8 +15,8 @@ function cleanNumericValue(value) {
 
 function parseAddress(fullAddress) {
     if (!fullAddress) return {};
-    // Limpar caracteres Unicode invisíveis (LRM, RLM, bidi overrides, BOM, etc.)
-    fullAddress = fullAddress.replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, '').trim();
+    // Limpar bidi controls, BOM e caracteres PUA (ícones do Google, ex: \ue0c8)
+    fullAddress = fullAddress.replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff\ue000-\uf8ff]/g, '').trim();
     const addressParts = {
         street: null,
         city: null,
@@ -412,8 +412,10 @@ async function extractPlaceDataFromPanel(page) {
 
         // ── Endereço ──────────────────────────────────────────────────────────
         const addrEl = document.querySelector('button[data-item-id="address"]');
-        // Remover caracteres Unicode invisíveis que o Google injeta (LRM \u200e, etc.)
-        const full_address = addrEl?.textContent?.replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, '').trim() || null;
+        // Remover: bidi controls (LRM etc.), BOM, e caracteres PUA (ícones do Google, ex: \ue0c8)
+        const full_address = addrEl?.textContent
+            ?.replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff\ue000-\uf8ff]/g, '')
+            .trim() || null;
 
         // ── Categoria ─────────────────────────────────────────────────────────
         const categoryEl = document.querySelector('button[jsaction*="category"], span.DkEaL');
@@ -511,6 +513,10 @@ const QUALITY_THRESHOLDS = {
     reviews_count: 0.85,  // 85% devem ter reviews_count
     full_address:  0.95,  // 95% devem ter endereço
 };
+
+// Campos críticos para o SDR: sem contato (phone/whatsapp) ou rating sem count → retry
+// Os demais campos abaixo do threshold apenas geram alerta mas não interrompem
+const CRITICAL_FIELDS = ['phone_or_whatsapp', 'rating_with_count'];
 
 // Verifica qualidade de uma janela de registros recentes.
 // Retorna lista de campos que estão abaixo do threshold.
@@ -708,34 +714,61 @@ try {
             if (qualityWindow.length > QUALITY_WINDOW_SIZE) qualityWindow.shift();
             saved++;
 
-            // Detectar campos ausentes neste registro e enfileirar para retry
-            const missingFields = Object.keys(QUALITY_THRESHOLDS).filter(f =>
-                result[f] == null || result[f] === ''
-            );
-            if (missingFields.length > 0) {
-                retryQueue.push({ ...result, _missing_fields: missingFields });
+            // ── Detectar problemas críticos neste registro ────────────────────
+            // Crítico 1: sem nenhum contato (phone E whatsapp ausentes)
+            const semContato = !result.phone && !result.whatsapp;
+            // Crítico 2: tem rating mas não tem reviews_count
+            const ratingSemCount = result.rating != null && result.reviews_count == null;
+
+            const criticalIssues = [
+                ...(semContato    ? ['sem_contato (phone e whatsapp ausentes)']    : []),
+                ...(ratingSemCount ? ['rating_sem_count']                           : []),
+            ];
+            const warningIssues = Object.keys(QUALITY_THRESHOLDS)
+                .filter(f => !['phone'].includes(f) && (result[f] == null || result[f] === ''))
+                .map(f => `${f}_ausente`);
+
+            if (criticalIssues.length > 0 || warningIssues.length > 0) {
+                retryQueue.push({
+                    ...result,
+                    _critical_issues: criticalIssues,
+                    _warning_issues:  warningIssues,
+                });
             }
 
-            // Verificação periódica de qualidade
+            // ── Verificação periódica de qualidade (janela deslizante) ────────
             if (saved % QUALITY_CHECK_EVERY === 0 && qualityWindow.length >= QUALITY_CHECK_EVERY) {
                 const failing = checkQuality(qualityWindow);
-                if (failing.length > 0) {
+
+                // Verificar % de registros sem contato na janela (crítico para SDR)
+                const semContatoCount = qualityWindow.filter(r => !r.phone && !r.whatsapp).length;
+                const semContatoPct   = Math.round(semContatoCount / qualityWindow.length * 100);
+                const contatoPct      = 100 - semContatoPct;
+
+                const hasContactProblem = contatoPct < 90; // menos de 90% com contato
+                const hasOtherFailures  = failing.length > 0;
+
+                if (hasContactProblem || hasOtherFailures) {
                     console.log(`\n⚠️  MONITOR DE QUALIDADE — janela dos últimos ${qualityWindow.length} registros:`);
+
+                    if (hasContactProblem) {
+                        console.log(`   🔴 contato (phone/whatsapp): ${contatoPct}% preenchido (mínimo: 90%) ← CRÍTICO`);
+                    }
                     for (const { field, pct, threshold } of failing) {
-                        console.log(`   ❌ ${field}: ${pct}% preenchido (mínimo: ${threshold}%)`);
+                        const isCrit = field === 'rating';
+                        const icon   = isCrit ? '🔴' : '🟡';
+                        const label  = isCrit ? '← CRÍTICO' : '← alerta';
+                        console.log(`   ${icon} ${field}: ${pct}% preenchido (mínimo: ${threshold}%) ${label}`);
                     }
 
-                    // Campos críticos que justificam abortar (não apenas avisar)
-                    const criticalFields = ['rating', 'full_address'];
-                    const isCritical = failing.some(f => criticalFields.includes(f.field));
-                    if (isCritical) {
+                    const shouldAbort = hasContactProblem || failing.some(f => f.field === 'rating');
+                    if (shouldAbort) {
                         console.log(`   🛑 Campo crítico abaixo do threshold — interrompendo extração.`);
-                        // Salvar fila de retry no dataset especial
                         if (retryQueue.length > 0) {
                             await Actor.pushData(
                                 retryQueue.map(r => ({ ...r, _dataset: 'retry_queue' })),
                                 { datasetName: 'retry_queue' }
-                            ).catch(() => {}); // silencioso se dataset nomeado não suportado localmente
+                            ).catch(() => {});
                             console.log(`   📋 ${retryQueue.length} lugares salvos em retry_queue para reprocessamento.`);
                         }
                         return 'ABORT';
