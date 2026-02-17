@@ -327,13 +327,80 @@ async function runWithConcurrency(tasks, concurrency) {
     return results;
 }
 
-// ─── Busca com Playwright (lista de lugares) ─────────────────────────────────
+// ─── Extrai dados do painel lateral após clicar em um lugar ──────────────────
 
-async function getPlaceLinksWithBrowser(searchTerm, location, language, maxPlaces) {
+async function extractPlaceDataFromPanel(page) {
+    // Aguarda o painel carregar (nome obrigatório)
+    await page.waitForSelector('h1', { timeout: 10000 });
+
+    return page.evaluate(() => {
+        const getText = sel => document.querySelector(sel)?.textContent?.trim() || null;
+        const getAttr = (sel, attr) => document.querySelector(sel)?.getAttribute(attr) || null;
+
+        // ── Nome ──────────────────────────────────────────────────────────────
+        const name = getText('h1');
+
+        // ── Rating ────────────────────────────────────────────────────────────
+        const ratingEl = document.querySelector('div[role="img"][aria-label*="estrela"], div[role="img"][aria-label*="star"]');
+        const ratingRaw = ratingEl?.getAttribute('aria-label')?.match(/[\d,.]+/)?.[0];
+        const rating = ratingRaw ? parseFloat(ratingRaw.replace(',', '.')) : null;
+
+        // ── Reviews ───────────────────────────────────────────────────────────
+        const reviewsEl = [...document.querySelectorAll('button span')].find(el => /\d.*avalia|review/i.test(el.textContent));
+        const reviewsRaw = reviewsEl?.textContent?.match(/([\d.,]+)/)?.[1];
+        const reviews_count = reviewsRaw ? parseInt(reviewsRaw.replace(/[.,]/g, ''), 10) : null;
+
+        // ── Telefone ──────────────────────────────────────────────────────────
+        const phoneEl = document.querySelector('button[data-item-id^="phone:tel:"], a[href^="tel:"]');
+        const phone = phoneEl?.getAttribute('data-item-id')?.replace('phone:tel:', '') ||
+                      phoneEl?.getAttribute('href')?.replace('tel:', '') ||
+                      null;
+
+        // ── Website ───────────────────────────────────────────────────────────
+        const websiteEl = document.querySelector('a[data-item-id="authority"], a[href*="//"][aria-label*="site"], a[href*="//"][aria-label*="website"]');
+        const website = websiteEl?.href || null;
+
+        // ── WhatsApp ──────────────────────────────────────────────────────────
+        const waEl = document.querySelector('a[href*="wa.me"], a[href*="api.whatsapp.com"]');
+        const waHref = waEl?.href || '';
+        const waMatch = waHref.match(/(?:wa\.me\/|phone=)(\d+)/);
+        const whatsapp = waMatch ? '+' + waMatch[1] : null;
+
+        // ── Endereço ──────────────────────────────────────────────────────────
+        const addrEl = document.querySelector('button[data-item-id="address"]');
+        const full_address = addrEl?.textContent?.trim() || null;
+
+        // ── Categoria ─────────────────────────────────────────────────────────
+        const categoryEl = document.querySelector('button[jsaction*="category"], span.DkEaL');
+        const category_primary = categoryEl?.textContent?.trim() || null;
+
+        // ── Business Status ───────────────────────────────────────────────────
+        const bodyText = document.body.innerText;
+        let business_status = 'OPERATIONAL';
+        if (/permanentemente fechado|permanently closed/i.test(bodyText)) business_status = 'CLOSED_PERMANENTLY';
+        else if (/temporariamente fechado|temporarily closed/i.test(bodyText)) business_status = 'CLOSED_TEMPORARILY';
+
+        // ── Price Level ───────────────────────────────────────────────────────
+        const priceEl = [...document.querySelectorAll('span')].find(el => /^[$€£]{1,4}$/.test(el.textContent.trim()));
+        const price_level = priceEl?.textContent?.trim() || null;
+
+        // ── URL atual (contém coordenadas, place_id, etc.) ────────────────────
+        const currentUrl = window.location.href;
+
+        return { name, rating, reviews_count, phone, website, whatsapp, full_address,
+                 category_primary, business_status, price_level, currentUrl };
+    });
+}
+
+// ─── Busca e extrai dados com Playwright ─────────────────────────────────────
+
+async function scrapeWithBrowser(searchTerm, location, language, maxPlaces) {
     const browser = await chromium.launch({
         headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
     });
+
+    const places = [];
 
     try {
         const context = await browser.newContext({
@@ -348,38 +415,87 @@ async function getPlaceLinksWithBrowser(searchTerm, location, language, maxPlace
         await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
         await page.waitForSelector('div[role="feed"] a[href*="/maps/place/"]', { timeout: 15000 });
 
-        // Scroll para carregar mais resultados
+        // Scroll para carregar mais resultados na lista
         const feed = 'div[role="feed"]';
         let prev = 0;
         for (let i = 0; i < 10; i++) {
-            const count = await page.evaluate(sel => document.querySelectorAll(`${sel} a[href*="/maps/place/"]`).length, feed);
+            const count = await page.evaluate(
+                sel => document.querySelectorAll(`${sel} a[href*="/maps/place/"]`).length, feed
+            );
             if (count >= maxPlaces) break;
-            await page.evaluate(sel => { const f = document.querySelector(sel); if (f) f.scrollTo(0, f.scrollHeight); }, feed);
-            await page.waitForTimeout(1500);
-            const newH = await page.evaluate(sel => { const f = document.querySelector(sel); return f ? f.scrollHeight : 0; }, feed);
+            await page.evaluate(
+                sel => { const f = document.querySelector(sel); if (f) f.scrollTo(0, f.scrollHeight); }, feed
+            );
+            await page.waitForTimeout(1200);
+            const newH = await page.evaluate(
+                sel => { const f = document.querySelector(sel); return f ? f.scrollHeight : 0; }, feed
+            );
             if (newH === prev) break;
             prev = newH;
         }
 
-        // Coletar links únicos
+        // Coletar todos os links da lista
         const links = await page.evaluate((max) => {
             const seen = new Set();
-            const results = [];
+            const result = [];
             for (const el of document.querySelectorAll('a[href*="/maps/place/"]')) {
                 if (el.href && !seen.has(el.href)) {
                     seen.add(el.href);
-                    results.push(el.href);
-                    if (results.length >= max) break;
+                    result.push(el.href);
+                    if (result.length >= max) break;
                 }
             }
-            return results;
+            return result;
         }, maxPlaces);
 
-        return links;
+        console.log(`   📋 ${links.length} links coletados, abrindo cada lugar...`);
+
+        // Clicar em cada lugar e extrair dados do painel lateral
+        for (let i = 0; i < links.length; i++) {
+            try {
+                await page.goto(links[i], { waitUntil: 'domcontentloaded', timeout: 30000 });
+                const panelData = await extractPlaceDataFromPanel(page);
+                const finalUrl = panelData.currentUrl || links[i];
+
+                // Extrair IDs e coordenadas da URL final
+                const cidMatch = finalUrl.match(/!1s(0x[0-9a-fA-F]+:0x[0-9a-fA-F]+)/);
+                const kgmidMatch = finalUrl.match(/!16s%2Fg%2F([a-zA-Z0-9_-]+)/);
+                const coordMatch = finalUrl.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/) ||
+                                   finalUrl.match(/@(-?\d+\.\d+),(-?\d+\.\d+),/);
+                const placeId = extractPlaceIdFromHtml(await page.content());
+
+                const place = {
+                    ...panelData,
+                    google_maps_url: finalUrl,
+                    place_id: placeId,
+                    cid: cidMatch ? cidMatch[1] : null,
+                    knowledge_graph_id: kgmidMatch ? `/g/${kgmidMatch[1]}` : null,
+                    latitude: coordMatch ? parseFloat(coordMatch[1]) : null,
+                    longitude: coordMatch ? parseFloat(coordMatch[2]) : null,
+                    categories: panelData.category_primary ? [panelData.category_primary] : [],
+                    services: [],
+                    rating_distribution: null,
+                    price_level: panelData.price_level,
+                };
+                delete place.currentUrl;
+
+                if (panelData.full_address) {
+                    Object.assign(place, parseAddress(panelData.full_address));
+                }
+
+                places.push(place);
+                console.log(`   ✓ [${i+1}/${links.length}] ${place.name} | ☎ ${place.phone || '-'} | 🌐 ${place.website || '-'}`);
+
+            } catch (e) {
+                console.log(`   ⚠️  [${i+1}/${links.length}] Erro ao extrair lugar: ${e.message}`);
+            }
+        }
 
     } finally {
         await browser.close();
     }
+
+    return places;
 }
 
 // ─── Main ────────────────────────────────────────────────────────────────────
@@ -413,70 +529,50 @@ try {
     for (const searchTerm of searchTerms) {
         console.log(`\n=== Buscando: "${searchTerm}" em ${location} ===`);
 
-        // ETAPA 1: Usar browser para obter a lista de links (requer JS)
-        let placeLinks = [];
+        let places = [];
         try {
-            console.log(`🌐 Abrindo browser para coletar lista de lugares...`);
-            placeLinks = await getPlaceLinksWithBrowser(searchTerm, location, language, maxCrawledPlacesPerSearch);
-            console.log(`   ✅ ${placeLinks.length} links coletados`);
+            console.log(`🌐 Abrindo browser para busca e extração de dados...`);
+            places = await scrapeWithBrowser(searchTerm, location, language, maxCrawledPlacesPerSearch);
         } catch (e) {
-            console.log(`❌ Erro ao buscar lista: ${e.message}`);
+            console.log(`❌ Erro ao buscar "${searchTerm}": ${e.message}`);
             continue;
         }
 
-        if (placeLinks.length === 0) {
+        if (places.length === 0) {
             console.log(`⚠️  Nenhum lugar encontrado para "${searchTerm}"`);
             continue;
         }
 
-        // ETAPA 2: Fetch paralelo para detalhes de cada lugar (sem browser)
-        console.log(`⚡ Extraindo detalhes de ${placeLinks.length} lugares em paralelo (concorrência: ${concurrency})...`);
+        let saved = 0;
+        for (const placeData of places) {
+            if (!placeData.name) continue;
 
-        const tasks = placeLinks.map((link, i) => async () => {
-            try {
-                const html = await fetchPage(link, language);
-                const placeData = parsePlaceFromHtml(html, link);
-
-                if (!placeData.name) {
-                    console.log(`⚠️  [${i+1}] Lugar sem nome, ignorando`);
-                    return null;
-                }
-
-                const dedupeKey = placeData.place_id || placeData.cid || link;
-                if (seenPlaceIds.has(dedupeKey)) {
-                    console.log(`⏭️  [${i+1}] ${placeData.name} ignorado (duplicado)`);
-                    return null;
-                }
-                seenPlaceIds.add(dedupeKey);
-
-                if (onlyWithWebsite && !placeData.website) {
-                    console.log(`⏭️  [${i+1}] ${placeData.name} ignorado (sem website)`);
-                    return null;
-                }
-
-                const result = {
-                    search_term: searchTerm,
-                    location,
-                    ...placeData,
-                    ...userData,
-                    scraped_at: new Date().toISOString()
-                };
-
-                await Actor.pushData(result);
-                console.log(`✓ [${i+1}] ${placeData.name} (${placeData.rating || 'N/A'} ⭐ | ${placeData.reviews_count || 0} reviews)`);
-                return result;
-
-            } catch (e) {
-                console.log(`❌ [${i+1}] Erro: ${e.message}`);
-                return null;
+            const dedupeKey = placeData.place_id || placeData.cid || placeData.google_maps_url;
+            if (seenPlaceIds.has(dedupeKey)) {
+                console.log(`⏭️  ${placeData.name} ignorado (duplicado)`);
+                continue;
             }
-        });
+            seenPlaceIds.add(dedupeKey);
 
-        const results = await runWithConcurrency(tasks, concurrency);
-        const valid = results.filter(Boolean);
-        allResults.push(...valid);
+            if (onlyWithWebsite && !placeData.website) {
+                console.log(`⏭️  ${placeData.name} ignorado (sem website)`);
+                continue;
+            }
 
-        console.log(`   ✅ ${valid.length} lugares salvos para "${searchTerm}"`);
+            const result = {
+                search_term: searchTerm,
+                location,
+                ...placeData,
+                ...userData,
+                scraped_at: new Date().toISOString()
+            };
+
+            await Actor.pushData(result);
+            saved++;
+        }
+
+        allResults.push(...places);
+        console.log(`   ✅ ${saved} lugares salvos para "${searchTerm}"`);
     }
 
     console.log(`\n=== Scraping concluído ===`);
