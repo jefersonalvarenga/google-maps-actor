@@ -342,7 +342,7 @@ async function extractPlaceDataFromPanel(page) {
             document.querySelector('a[data-item-id="authority"]') ||
             document.querySelector('button[jsaction*="category"]')
         );
-    }, { timeout: 8000 }).catch(() => {
+    }, { timeout: 2000 }).catch(() => {
         // Fallback silencioso — extrai o que tiver no DOM
     });
 
