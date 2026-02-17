@@ -401,7 +401,7 @@ async function extractPlace(browser, link, language, label) {
     });
     const page = await context.newPage();
     try {
-        await page.goto(link, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await page.goto(link, { waitUntil: 'domcontentloaded', timeout: 60000 });
         const panelData = await extractPlaceDataFromPanel(page);
         const finalUrl = panelData.currentUrl || link;
 
@@ -438,7 +438,7 @@ async function extractPlace(browser, link, language, label) {
 
 // ─── Busca e extrai dados com Playwright (paralelo) ──────────────────────────
 
-async function scrapeWithBrowser(searchTerm, location, language, maxPlaces, concurrency) {
+async function scrapeWithBrowser(searchTerm, location, language, maxPlaces, concurrency, onPlaceReady) {
     const browser = await chromium.launch({
         headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
@@ -505,6 +505,8 @@ async function scrapeWithBrowser(searchTerm, location, language, maxPlaces, conc
                 try {
                     const place = await extractPlace(browser, links[i], language, label);
                     places.push(place);
+                    // Notificar callback imediatamente (output em tempo real)
+                    if (onPlaceReady) await onPlaceReady(place);
                 } catch (e) {
                     console.log(`   ⚠️  ${label} Erro: ${e.message.split('\n')[0]}`);
                 }
@@ -535,7 +537,7 @@ try {
         maxCrawledPlacesPerSearch = 20,
         language = 'pt-BR',
         onlyWithWebsite = false,
-        concurrency = 10,
+        concurrency = 3,
         userData = {}
     } = input;
 
@@ -552,34 +554,21 @@ try {
     for (const searchTerm of searchTerms) {
         console.log(`\n=== Buscando: "${searchTerm}" em ${location} ===`);
 
-        let places = [];
-        try {
-            console.log(`🌐 Abrindo browser para busca e extração de dados...`);
-            places = await scrapeWithBrowser(searchTerm, location, language, maxCrawledPlacesPerSearch, concurrency);
-        } catch (e) {
-            console.log(`❌ Erro ao buscar "${searchTerm}": ${e.message}`);
-            continue;
-        }
-
-        if (places.length === 0) {
-            console.log(`⚠️  Nenhum lugar encontrado para "${searchTerm}"`);
-            continue;
-        }
-
         let saved = 0;
-        for (const placeData of places) {
-            if (!placeData.name) continue;
+
+        const onPlaceReady = async (placeData) => {
+            if (!placeData.name) return;
 
             const dedupeKey = placeData.place_id || placeData.cid || placeData.google_maps_url;
             if (seenPlaceIds.has(dedupeKey)) {
                 console.log(`⏭️  ${placeData.name} ignorado (duplicado)`);
-                continue;
+                return;
             }
             seenPlaceIds.add(dedupeKey);
 
             if (onlyWithWebsite && !placeData.website) {
                 console.log(`⏭️  ${placeData.name} ignorado (sem website)`);
-                continue;
+                return;
             }
 
             const result = {
@@ -591,10 +580,18 @@ try {
             };
 
             await Actor.pushData(result);
+            allResults.push(result);
             saved++;
+        };
+
+        try {
+            console.log(`🌐 Abrindo browser para busca e extração de dados...`);
+            await scrapeWithBrowser(searchTerm, location, language, maxCrawledPlacesPerSearch, concurrency, onPlaceReady);
+        } catch (e) {
+            console.log(`❌ Erro ao buscar "${searchTerm}": ${e.message}`);
+            continue;
         }
 
-        allResults.push(...places);
         console.log(`   ✅ ${saved} lugares salvos para "${searchTerm}"`);
     }
 

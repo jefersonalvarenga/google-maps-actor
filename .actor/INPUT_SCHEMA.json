@@ -49,12 +49,12 @@
             ]
         },
         "concurrency": {
-            "title": "Concorrência",
+            "title": "Concorrência (tabs paralelas)",
             "type": "integer",
-            "description": "Número de lugares extraídos em paralelo. Valores maiores = mais rápido, mas maior chance de bloqueio",
-            "default": 10,
+            "description": "Número de tabs do browser abertas em paralelo. Recomendado: 3. Máximo: 5 (acima disso causa timeouts por falta de memória no container)",
+            "default": 3,
             "minimum": 1,
-            "maximum": 20
+            "maximum": 5
         },
         "onlyWithWebsite": {
             "title": "Apenas com website",
