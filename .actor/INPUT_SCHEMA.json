@@ -51,11 +51,11 @@
         "memoryMbytes": {
             "title": "RAM (MB)",
             "type": "integer",
-            "description": "Memória RAM em MB. Recomendado: 4096 (4GB) para até 100 lugares, 8192 (8GB) para runs grandes. Pode ser sobrescrito via API.",
+            "description": "Memória RAM em MB. Recomendado: 4096 (4GB) para até 100 lugares, 8192 (8GB) para runs grandes.",
             "default": 4096,
-            "editor": "select",
-            "enum": [2048, 4096, 8192, 16384],
-            "enumTitles": ["2 GB", "4 GB (recomendado)", "8 GB", "16 GB"]
+            "editor": "number",
+            "minimum": 512,
+            "maximum": 32768
         },
         "onlyWithWebsite": {
             "title": "Apenas com website",
