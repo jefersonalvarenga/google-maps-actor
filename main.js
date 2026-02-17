@@ -375,13 +375,24 @@ async function extractPlaceDataFromPanel(page) {
         const rating = ratingRaw ? parseFloat(ratingRaw.replace(',', '.')) : null;
 
         // ── Reviews ───────────────────────────────────────────────────────────
-        // Cobrir: button span (clicável), span.F7nice (estruturado), aria-label do rating
-        const reviewsEl = [...document.querySelectorAll('button span, span')].find(el =>
-            /^\(?([\d.,]+)\)?\s*(?:avalia[çc][õo]es?|reviews?)/i.test(el.textContent.trim())
-        );
-        // Fallback: pegar o número entre parênteses no aria-label do rating (ex: "4,3 estrelas, 120 avaliações")
-        const reviewsFromLabel = ratingEl?.getAttribute('aria-label')?.match(/(\d[\d.,]*)\s*(?:avalia|review)/i)?.[1];
-        const reviewsRaw = reviewsEl?.textContent?.match(/([\d.,]+)/)?.[1] || reviewsFromLabel;
+        // O Google exibe o count como "(178)" num span separado, ao lado das estrelas.
+        // Estratégia 1: span cujo texto é exatamente "(N)" ou "N avaliações"
+        const reviewsEl = [...document.querySelectorAll('span')].find(el => {
+            const t = el.textContent.trim();
+            return /^\([\d.,]+\)$/.test(t) ||                        // "(178)"
+                   /^[\d.,]+\s*(?:avalia[çc][õo]es?|reviews?)$/i.test(t); // "178 avaliações"
+        });
+        // Estratégia 2: aria-label do elemento de rating que às vezes inclui o count
+        // ex: "4,3 estrelas 120 avaliações" ou "Rated 4.3 out of 5, 120 reviews"
+        const reviewsFromLabel = ratingEl?.getAttribute('aria-label')
+            ?.match(/(\d[\d.,]*)\s*(?:avalia[çc][õo]es?|reviews?)/i)?.[1];
+        // Estratégia 3: botão que abre as avaliações (aria-label="120 avaliações")
+        const reviewsBtn = document.querySelector('button[aria-label*="avalia"], button[aria-label*="review"]');
+        const reviewsFromBtn = reviewsBtn?.getAttribute('aria-label')?.match(/^([\d.,]+)/)?.[1];
+
+        const reviewsRaw = reviewsEl?.textContent?.replace(/[()]/g, '').trim()
+                        || reviewsFromLabel
+                        || reviewsFromBtn;
         const reviews_count = reviewsRaw ? parseInt(reviewsRaw.replace(/\./g, '').replace(',', ''), 10) : null;
 
         // ── Telefone ──────────────────────────────────────────────────────────
