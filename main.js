@@ -338,11 +338,9 @@ try {
         try {
             console.log(`📡 Buscando lista de lugares...`);
             const searchHtml = await fetchPage(searchUrl, language);
-            // DEBUG: logar tamanho total e buscar ChIJ diretamente
+            // DEBUG: logar resposta completa
             console.log(`DEBUG: tamanho da resposta: ${searchHtml.length} chars`);
-            const allChiJs = searchHtml.match(/ChIJ[\w-]{10,}/g) || [];
-            console.log(`DEBUG: ChIJ encontrados via regex direto: ${allChiJs.length}`);
-            if (allChiJs.length > 0) console.log(`DEBUG: primeiros 5: ${allChiJs.slice(0, 5).join(', ')}`);
+            console.log(`DEBUG: resposta completa:\n${searchHtml}`);
             placeLinks = extractPlaceLinksFromHtml(searchHtml, maxCrawledPlacesPerSearch);
             console.log(`   Encontrados ${placeLinks.length} links de lugares`);
         } catch (e) {
