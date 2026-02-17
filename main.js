@@ -489,19 +489,35 @@ async function scrapeWithBrowser(searchTerm, location, language, maxPlaces, conc
 
         const feed = 'div[role="feed"]';
         let prev = 0;
-        for (let i = 0; i < 10; i++) {
-            const count = await searchPage.evaluate(
-                sel => document.querySelectorAll(`${sel} a[href*="/maps/place/"]`).length, feed
-            );
-            if (count >= maxPlaces) break;
+        let stalledCount = 0;
+        while (true) {
+            const { count, endOfList } = await searchPage.evaluate((sel) => {
+                const f = document.querySelector(sel);
+                // Detecta mensagem de fim de lista em PT e EN
+                const text = f?.innerText || '';
+                const endOfList = /chegou ao fim|you've reached the end|fim da lista|no more results/i.test(text);
+                return {
+                    count: document.querySelectorAll(`${sel} a[href*="/maps/place/"]`).length,
+                    endOfList,
+                };
+            }, feed);
+
+            if (count >= maxPlaces || endOfList) break;
+
             await searchPage.evaluate(
                 sel => { const f = document.querySelector(sel); if (f) f.scrollTo(0, f.scrollHeight); }, feed
             );
-            await searchPage.waitForTimeout(1200);
+            await searchPage.waitForTimeout(1000);
+
             const newH = await searchPage.evaluate(
                 sel => { const f = document.querySelector(sel); return f ? f.scrollHeight : 0; }, feed
             );
-            if (newH === prev) break;
+            if (newH === prev) {
+                stalledCount++;
+                if (stalledCount >= 3) break; // 3 scrolls sem mudança = fim real
+            } else {
+                stalledCount = 0;
+            }
             prev = newH;
         }
 
