@@ -284,6 +284,8 @@ try {
         try {
             console.log(`📡 Buscando lista de lugares...`);
             const searchHtml = await fetchPage(searchUrl, language);
+            // DEBUG: logar primeiros 2000 chars do HTML para diagnóstico
+            console.log(`DEBUG HTML (primeiros 2000 chars):\n${searchHtml.substring(0, 2000)}`);
             placeLinks = extractPlaceLinksFromHtml(searchHtml, maxCrawledPlacesPerSearch);
             console.log(`   Encontrados ${placeLinks.length} links de lugares`);
         } catch (e) {
