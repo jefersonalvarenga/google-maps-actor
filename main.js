@@ -392,9 +392,53 @@ async function extractPlaceDataFromPanel(page) {
     });
 }
 
-// ─── Busca e extrai dados com Playwright ─────────────────────────────────────
+// ─── Extrai dados de um lugar (uma página/tab por vez) ───────────────────────
 
-async function scrapeWithBrowser(searchTerm, location, language, maxPlaces) {
+async function extractPlace(browser, link, language, label) {
+    const context = await browser.newContext({
+        locale: language,
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    });
+    const page = await context.newPage();
+    try {
+        await page.goto(link, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        const panelData = await extractPlaceDataFromPanel(page);
+        const finalUrl = panelData.currentUrl || link;
+
+        const cidMatch    = finalUrl.match(/!1s(0x[0-9a-fA-F]+:0x[0-9a-fA-F]+)/);
+        const kgmidMatch  = finalUrl.match(/!16s%2Fg%2F([a-zA-Z0-9_-]+)/);
+        const coordMatch  = finalUrl.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/) ||
+                            finalUrl.match(/@(-?\d+\.\d+),(-?\d+\.\d+),/);
+        const placeId     = extractPlaceIdFromHtml(await page.content());
+
+        const place = {
+            ...panelData,
+            google_maps_url: finalUrl,
+            place_id: placeId,
+            cid: cidMatch  ? cidMatch[1]            : null,
+            knowledge_graph_id: kgmidMatch ? `/g/${kgmidMatch[1]}` : null,
+            latitude:  coordMatch ? parseFloat(coordMatch[1]) : null,
+            longitude: coordMatch ? parseFloat(coordMatch[2]) : null,
+            categories: panelData.category_primary ? [panelData.category_primary] : [],
+            services: [],
+            rating_distribution: null,
+        };
+        delete place.currentUrl;
+
+        if (panelData.full_address) {
+            Object.assign(place, parseAddress(panelData.full_address));
+        }
+
+        console.log(`   ✓ ${label} ${place.name} | ⭐ ${place.rating ?? '-'} (${place.reviews_count ?? 0} reviews) | ☎ ${place.phone || '-'} | 🌐 ${place.website || '-'}`);
+        return place;
+    } finally {
+        await context.close();
+    }
+}
+
+// ─── Busca e extrai dados com Playwright (paralelo) ──────────────────────────
+
+async function scrapeWithBrowser(searchTerm, location, language, maxPlaces, concurrency) {
     const browser = await chromium.launch({
         headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
@@ -403,39 +447,38 @@ async function scrapeWithBrowser(searchTerm, location, language, maxPlaces) {
     const places = [];
 
     try {
-        const context = await browser.newContext({
+        // ETAPA 1: Coletar lista de links via uma única aba de busca
+        const searchContext = await browser.newContext({
             locale: language,
             userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         });
-        const page = await context.newPage();
+        const searchPage = await searchContext.newPage();
 
         const searchQuery = encodeURIComponent(`${searchTerm} ${location}`);
         const searchUrl = `https://www.google.com/maps/search/${searchQuery}?hl=${language}`;
 
-        await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-        await page.waitForSelector('div[role="feed"] a[href*="/maps/place/"]', { timeout: 15000 });
+        await searchPage.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await searchPage.waitForSelector('div[role="feed"] a[href*="/maps/place/"]', { timeout: 15000 });
 
-        // Scroll para carregar mais resultados na lista
         const feed = 'div[role="feed"]';
         let prev = 0;
         for (let i = 0; i < 10; i++) {
-            const count = await page.evaluate(
+            const count = await searchPage.evaluate(
                 sel => document.querySelectorAll(`${sel} a[href*="/maps/place/"]`).length, feed
             );
             if (count >= maxPlaces) break;
-            await page.evaluate(
+            await searchPage.evaluate(
                 sel => { const f = document.querySelector(sel); if (f) f.scrollTo(0, f.scrollHeight); }, feed
             );
-            await page.waitForTimeout(1200);
-            const newH = await page.evaluate(
+            await searchPage.waitForTimeout(1200);
+            const newH = await searchPage.evaluate(
                 sel => { const f = document.querySelector(sel); return f ? f.scrollHeight : 0; }, feed
             );
             if (newH === prev) break;
             prev = newH;
         }
 
-        // Coletar todos os links da lista
-        const links = await page.evaluate((max) => {
+        const links = await searchPage.evaluate((max) => {
             const seen = new Set();
             const result = [];
             for (const el of document.querySelectorAll('a[href*="/maps/place/"]')) {
@@ -448,48 +491,28 @@ async function scrapeWithBrowser(searchTerm, location, language, maxPlaces) {
             return result;
         }, maxPlaces);
 
-        console.log(`   📋 ${links.length} links coletados, abrindo cada lugar...`);
+        await searchContext.close();
+        console.log(`   📋 ${links.length} links coletados — extraindo em paralelo (${concurrency} tabs)...`);
 
-        // Clicar em cada lugar e extrair dados do painel lateral
-        for (let i = 0; i < links.length; i++) {
-            try {
-                await page.goto(links[i], { waitUntil: 'domcontentloaded', timeout: 30000 });
-                const panelData = await extractPlaceDataFromPanel(page);
-                const finalUrl = panelData.currentUrl || links[i];
+        // ETAPA 2: Abrir cada lugar em paralelo com N contextos simultâneos
+        let index = 0;
+        const total = links.length;
 
-                // Extrair IDs e coordenadas da URL final
-                const cidMatch = finalUrl.match(/!1s(0x[0-9a-fA-F]+:0x[0-9a-fA-F]+)/);
-                const kgmidMatch = finalUrl.match(/!16s%2Fg%2F([a-zA-Z0-9_-]+)/);
-                const coordMatch = finalUrl.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/) ||
-                                   finalUrl.match(/@(-?\d+\.\d+),(-?\d+\.\d+),/);
-                const placeId = extractPlaceIdFromHtml(await page.content());
-
-                const place = {
-                    ...panelData,
-                    google_maps_url: finalUrl,
-                    place_id: placeId,
-                    cid: cidMatch ? cidMatch[1] : null,
-                    knowledge_graph_id: kgmidMatch ? `/g/${kgmidMatch[1]}` : null,
-                    latitude: coordMatch ? parseFloat(coordMatch[1]) : null,
-                    longitude: coordMatch ? parseFloat(coordMatch[2]) : null,
-                    categories: panelData.category_primary ? [panelData.category_primary] : [],
-                    services: [],
-                    rating_distribution: null,
-                    price_level: panelData.price_level,
-                };
-                delete place.currentUrl;
-
-                if (panelData.full_address) {
-                    Object.assign(place, parseAddress(panelData.full_address));
+        async function worker() {
+            while (index < total) {
+                const i = index++;
+                const label = `[${i+1}/${total}]`;
+                try {
+                    const place = await extractPlace(browser, links[i], language, label);
+                    places.push(place);
+                } catch (e) {
+                    console.log(`   ⚠️  ${label} Erro: ${e.message.split('\n')[0]}`);
                 }
-
-                places.push(place);
-                console.log(`   ✓ [${i+1}/${links.length}] ${place.name} | ☎ ${place.phone || '-'} | 🌐 ${place.website || '-'}`);
-
-            } catch (e) {
-                console.log(`   ⚠️  [${i+1}/${links.length}] Erro ao extrair lugar: ${e.message}`);
             }
         }
+
+        const workers = Array.from({ length: Math.min(concurrency, total) }, worker);
+        await Promise.all(workers);
 
     } finally {
         await browser.close();
@@ -532,7 +555,7 @@ try {
         let places = [];
         try {
             console.log(`🌐 Abrindo browser para busca e extração de dados...`);
-            places = await scrapeWithBrowser(searchTerm, location, language, maxCrawledPlacesPerSearch);
+            places = await scrapeWithBrowser(searchTerm, location, language, maxCrawledPlacesPerSearch, concurrency);
         } catch (e) {
             console.log(`❌ Erro ao buscar "${searchTerm}": ${e.message}`);
             continue;
