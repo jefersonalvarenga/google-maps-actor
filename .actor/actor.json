@@ -10,7 +10,7 @@
     "defaultRunOptions": {
         "build": "latest",
         "timeoutSecs": 3600,
-        "memoryMbytes": 2048
+        "memoryMbytes": 4096
     },
     "storages": {
         "dataset": {
@@ -22,28 +22,33 @@
                     "title": "Todos os resultados",
                     "transformation": {
                         "fields": [
-                            "title",
-                            "placeId",
+                            "name",
+                            "place_id",
                             "cid",
-                            "kgmid",
-                            "totalScore",
-                            "reviewsCount",
-                            "ratingDistribution",
-                            "categoryName",
-                            "priceLevel",
-                            "businessStatus",
+                            "knowledge_graph_id",
+                            "rating",
+                            "reviews_count",
+                            "rating_distribution",
+                            "category_primary",
+                            "categories",
+                            "price_level",
+                            "business_status",
+                            "full_address",
                             "street",
                             "city",
                             "state",
-                            "postalCode",
+                            "postal_code",
+                            "country_code",
                             "latitude",
                             "longitude",
                             "phone",
+                            "whatsapp",
                             "website",
                             "services",
-                            "url",
-                            "searchTerm",
-                            "location"
+                            "google_maps_url",
+                            "search_term",
+                            "location",
+                            "scraped_at"
                         ]
                     }
                 }

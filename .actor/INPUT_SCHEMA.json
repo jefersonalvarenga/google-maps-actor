@@ -58,9 +58,11 @@
         "userData": {
             "title": "Dados personalizados (opcional)",
             "type": "object",
-            "description": "Objeto JSON com dados adicionais que serão incluídos em cada resultado (ex: search_run_id, campaign_id, etc)",
+            "description": "Campos extras incluídos em cada resultado. Ex: { \"search_run_id\": \"abc-123\", \"campaign_id\": \"camp-456\" }",
             "editor": "json",
-            "prefill": {}
+            "prefill": {
+                "search_run_id": ""
+            }
         }
     },
     "required": [
