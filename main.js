@@ -330,11 +330,14 @@ async function runWithConcurrency(tasks, concurrency) {
 // ─── Extrai dados do painel lateral após clicar em um lugar ──────────────────
 
 async function extractPlaceDataFromPanel(page) {
-    // Aguarda h1 + pelo menos um dado de detalhe (phone, address, website, category)
-    // ou no máximo 8s — o que vier primeiro
+    // Aguarda o h1 real do lugar (não "Google Maps" genérico do título)
     await page.waitForFunction(() => {
-        const h1 = document.querySelector('h1');
-        if (!h1?.textContent?.trim()) return false;
+        const h1 = document.querySelector('h1.DUwDvf, h1.fontHeadlineLarge');
+        return !!(h1?.textContent?.trim());
+    }, { timeout: 15000 }).catch(() => {});
+
+    // Aguarda pelo menos um campo de detalhe (phone, address, website, category)
+    await page.waitForFunction(() => {
         return !!(
             document.querySelector('button[data-item-id^="phone:tel:"]') ||
             document.querySelector('a[href^="tel:"]') ||
@@ -342,16 +345,15 @@ async function extractPlaceDataFromPanel(page) {
             document.querySelector('a[data-item-id="authority"]') ||
             document.querySelector('button[jsaction*="category"]')
         );
-    }, { timeout: 2000 }).catch(() => {
-        // Fallback silencioso — extrai o que tiver no DOM
-    });
+    }, { timeout: 3000 }).catch(() => {});
 
     return page.evaluate(() => {
         const getText = sel => document.querySelector(sel)?.textContent?.trim() || null;
         const getAttr = (sel, attr) => document.querySelector(sel)?.getAttribute(attr) || null;
 
         // ── Nome ──────────────────────────────────────────────────────────────
-        const name = getText('h1');
+        // Usar classe específica do Maps para evitar pegar "Google Maps" do título genérico
+        const name = getText('h1.DUwDvf') || getText('h1.fontHeadlineLarge') || getText('h1');
 
         // ── Rating ────────────────────────────────────────────────────────────
         const ratingEl = document.querySelector('div[role="img"][aria-label*="estrela"], div[role="img"][aria-label*="star"]');
@@ -578,6 +580,10 @@ try {
         userData = {}
     } = input;
 
+    // Garantir que userData é um objeto plano (não string, não array)
+    const safeUserData = (userData && typeof userData === 'object' && !Array.isArray(userData))
+        ? userData : {};
+
     console.log(`\n🚀 Iniciando scraping`);
     console.log(`   📍 Localização: ${location}`);
     console.log(`   🔍 Termos de busca: ${searchTerms.length} termo(s)`);
@@ -597,7 +603,8 @@ try {
         let saved = 0;
 
         const onPlaceReady = async (placeData) => {
-            if (!placeData.name) return;
+            // Ignorar registros sem nome ou com nome genérico do browser
+            if (!placeData.name || placeData.name === 'Google Maps') return;
 
             const dedupeKey = placeData.place_id || placeData.cid || placeData.google_maps_url;
             if (seenPlaceIds.has(dedupeKey)) {
@@ -615,7 +622,7 @@ try {
                 search_term: searchTerm,
                 location,
                 ...placeData,
-                ...userData,
+                ...safeUserData,
                 scraped_at: new Date().toISOString()
             };
 
