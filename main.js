@@ -330,8 +330,8 @@ async function runWithConcurrency(tasks, concurrency) {
 // ─── Extrai dados do painel lateral após clicar em um lugar ──────────────────
 
 async function extractPlaceDataFromPanel(page) {
-    // Aguarda o painel carregar (nome obrigatório)
-    await page.waitForSelector('h1', { timeout: 10000 });
+    // Aguarda o painel carregar — h1 com classe do Maps (mais específico e confiável)
+    await page.waitForSelector('h1.DUwDvf, h1.fontHeadlineLarge, h1', { timeout: 30000 });
 
     return page.evaluate(() => {
         const getText = sel => document.querySelector(sel)?.textContent?.trim() || null;
@@ -401,7 +401,7 @@ async function extractPlace(browser, link, language, label) {
     });
     const page = await context.newPage();
     try {
-        await page.goto(link, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await page.goto(link, { waitUntil: 'networkidle', timeout: 60000 });
         const panelData = await extractPlaceDataFromPanel(page);
         const finalUrl = panelData.currentUrl || link;
 
