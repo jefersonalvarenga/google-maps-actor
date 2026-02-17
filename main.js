@@ -432,7 +432,14 @@ async function extractPlace(page, link, label) {
     const fromUrl = extractFromUrl(link);
 
     await page.goto(link, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    const panelData = await extractPlaceDataFromPanel(page);
+    let panelData = await extractPlaceDataFromPanel(page);
+
+    // Se o nome vier inválido, logar e tentar uma segunda vez com mais tempo
+    if (!panelData.name || panelData.name === 'Google Maps') {
+        console.log(`   🔄 ${label} Nome inválido ("${panelData.name}") — retry com 5s extra...`);
+        await page.waitForTimeout(5000);
+        panelData = await extractPlaceDataFromPanel(page);
+    }
 
     const finalUrl = panelData.currentUrl || link;
     // Após navegação, a URL final pode ter mais dados (ex: place_id via ChIJ)
@@ -603,8 +610,10 @@ try {
         let saved = 0;
 
         const onPlaceReady = async (placeData) => {
-            // Ignorar registros sem nome ou com nome genérico do browser
-            if (!placeData.name || placeData.name === 'Google Maps') return;
+            if (!placeData.name || placeData.name === 'Google Maps') {
+                console.log(`⚠️  Lugar sem nome válido ignorado (url: ${placeData.google_maps_url?.slice(0, 80)})`);
+                return;
+            }
 
             const dedupeKey = placeData.place_id || placeData.cid || placeData.google_maps_url;
             if (seenPlaceIds.has(dedupeKey)) {
