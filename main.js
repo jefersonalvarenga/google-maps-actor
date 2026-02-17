@@ -494,27 +494,18 @@ async function scrapeWithBrowser(searchTerm, location, language, maxPlaces, conc
         await searchContext.close();
         console.log(`   📋 ${links.length} links coletados — extraindo em paralelo (${concurrency} tabs)...`);
 
-        // ETAPA 2: Abrir cada lugar em paralelo com N contextos simultâneos
-        let index = 0;
+        // ETAPA 2: Abrir cada lugar sequencialmente (1 tab por vez — mais estável no container)
         const total = links.length;
-
-        async function worker() {
-            while (index < total) {
-                const i = index++;
-                const label = `[${i+1}/${total}]`;
-                try {
-                    const place = await extractPlace(browser, links[i], language, label);
-                    places.push(place);
-                    // Notificar callback imediatamente (output em tempo real)
-                    if (onPlaceReady) await onPlaceReady(place);
-                } catch (e) {
-                    console.log(`   ⚠️  ${label} Erro: ${e.message.split('\n')[0]}`);
-                }
+        for (let i = 0; i < total; i++) {
+            const label = `[${i+1}/${total}]`;
+            try {
+                const place = await extractPlace(browser, links[i], language, label);
+                places.push(place);
+                if (onPlaceReady) await onPlaceReady(place);
+            } catch (e) {
+                console.log(`   ⚠️  ${label} Erro: ${e.message.split('\n')[0]}`);
             }
         }
-
-        const workers = Array.from({ length: Math.min(concurrency, total) }, worker);
-        await Promise.all(workers);
 
     } finally {
         await browser.close();
