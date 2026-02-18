@@ -1,5 +1,10 @@
 import { Actor } from 'apify';
 import { chromium } from 'playwright';
+import { readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 await Actor.init();
 
@@ -518,6 +523,27 @@ async function extractPlace(page, link, label) {
     return place;
 }
 
+// ─── Salva retry_queue como arquivo local ────────────────────────────────────
+
+async function saveRetryQueue(retryQueue, runId, searchTerm) {
+    if (retryQueue.length === 0) return;
+    try {
+        const dir = resolve(__dirname, 'storage', 'datasets', runId || 'default');
+        mkdirSync(dir, { recursive: true });
+        const filePath = resolve(dir, 'retry_queue.json');
+
+        // Se já existir, acumula (lê e faz merge)
+        let existing = [];
+        try { existing = JSON.parse(readFileSync(filePath, 'utf-8')); } catch (_) {}
+
+        const merged = [...existing, ...retryQueue.map(r => ({ ...r, _dataset: 'retry_queue' }))];
+        writeFileSync(filePath, JSON.stringify(merged, null, 2), 'utf-8');
+        console.log(`   📋 ${retryQueue.length} lugares salvos em retry_queue → ${filePath}`);
+    } catch (e) {
+        console.log(`   ⚠️  Erro ao salvar retry_queue: ${e.message}`);
+    }
+}
+
 // ─── Verificação de qualidade em tempo real ──────────────────────────────────
 
 // Thresholds mínimos por campo (% de preenchimento esperado)
@@ -655,7 +681,31 @@ async function scrapeWithBrowser(searchTerm, location, language, maxPlaces, conc
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 try {
-    const input = await Actor.getInput();
+    // ── Suporte a RUN_ID (gerado pelo prepare_input.py) ───────────────────────
+    // Se RUN_ID for passado via env (ex: RUN_ID=f6aa3c1c ./run.sh f6aa3c1c),
+    // carrega o input de inputs/<RUN_ID>/INPUT.json em vez do padrão do Apify.
+    const runId = process.env.RUN_ID || null;
+
+    let input;
+    if (runId) {
+        const inputPath = resolve(__dirname, 'inputs', runId, 'INPUT.json');
+        try {
+            input = JSON.parse(readFileSync(inputPath, 'utf-8'));
+            console.log(`📂 Input carregado de: inputs/${runId}/INPUT.json`);
+        } catch (e) {
+            throw new Error(`RUN_ID="${runId}" especificado mas inputs/${runId}/INPUT.json não encontrado: ${e.message}`);
+        }
+    } else {
+        input = await Actor.getInput();
+    }
+
+    // ── Dataset nomeado com RUN_ID ────────────────────────────────────────────
+    // Localmente: salva em storage/datasets/<runId>/
+    // No Apify: usa dataset nomeado com o runId
+    const dataset = runId
+        ? await Actor.openDataset(runId)
+        : await Actor.openDataset();
+    console.log(`💾 Dataset: ${runId || 'default'}`);
 
     if (!input?.searchTerms?.length) throw new Error('searchTerms é obrigatório');
     if (!input.location) throw new Error('location é obrigatório');
@@ -722,7 +772,7 @@ try {
                 scraped_at: new Date().toISOString()
             };
 
-            await Actor.pushData(result);
+            await dataset.pushData(result);
             allResults.push(result);
             qualityWindow.push(result);
             if (qualityWindow.length > QUALITY_WINDOW_SIZE) qualityWindow.shift();
@@ -778,13 +828,7 @@ try {
                     const shouldAbort = hasContactProblem || failing.some(f => f.field === 'rating');
                     if (shouldAbort) {
                         console.log(`   🛑 Campo crítico abaixo do threshold — interrompendo extração.`);
-                        if (retryQueue.length > 0) {
-                            await Actor.pushData(
-                                retryQueue.map(r => ({ ...r, _dataset: 'retry_queue' })),
-                                { datasetName: 'retry_queue' }
-                            ).catch(() => {});
-                            console.log(`   📋 ${retryQueue.length} lugares salvos em retry_queue para reprocessamento.`);
-                        }
+                        await saveRetryQueue(retryQueue, runId, searchTerm);
                         return 'ABORT';
                     } else {
                         console.log(`   ⚠️  Qualidade abaixo do esperado mas sem campos críticos — continuando.`);
@@ -805,12 +849,13 @@ try {
 
         console.log(`   ✅ ${saved} lugares salvos para "${searchTerm}"`);
         if (retryQueue.length > 0) {
-            console.log(`   📋 ${retryQueue.length} com problemas (retry_queue):`);
+            console.log(`   📋 ${retryQueue.length} com problemas:`);
             for (const r of retryQueue.slice(0, 5)) {
                 const issues = [...(r._critical_issues || []), ...(r._warning_issues || [])].join(', ');
                 console.log(`      • ${r.name} — ${issues}`);
             }
             if (retryQueue.length > 5) console.log(`      ... e mais ${retryQueue.length - 5}`);
+            await saveRetryQueue(retryQueue, runId, searchTerm);
         }
     }
 

@@ -1,0 +1,15 @@
+{
+    "searchTerms": [
+        "clínica estética",
+        "dermatologista",
+        "harmonização facial"
+    ],
+    "location": "São Paulo, SP, BR",
+    "maxCrawledPlacesPerSearch": 100,
+    "language": "pt-BR",
+    "onlyWithWebsite": true,
+    "userData": {
+        "campaign_id": "camp_001",
+        "vertical": "estetica"
+    }
+}

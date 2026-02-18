@@ -5,3 +5,14 @@ storage/
 .env
 *.log
 .DS_Store
+
+# Inputs gerados pelo prepare_input.py (contêm dados sensíveis de runs)
+inputs/*/INPUT.json
+
+# Datasets de entrada (podem conter dados de clientes)
+datasets/*.json
+!datasets/.gitkeep
+!datasets/example.json
+
+# Manter manifests (sem dados sensíveis, útil para histórico)
+!inputs/*/manifest.json
